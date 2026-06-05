@@ -29,16 +29,28 @@ export async function POST(req: NextRequest) {
       lead_status:      r.lead_status?.trim()         || (r.uses_parting_pro === 'yes' ? 'existing_customer' : 'prospect'),
     }))
 
-    // Upsert in chunks of 500
+    // Insert in chunks of 500 — simple insert, skip duplicates via name dedup
     const CHUNK = 500
     let inserted = 0
     for (let i = 0; i < mapped.length; i += CHUNK) {
       const chunk = mapped.slice(i, i + CHUNK)
-      const { error } = await supabaseAdmin
+      const { error, data } = await supabaseAdmin
         .from('funeral_homes')
-        .upsert(chunk, { onConflict: 'name,city,state_abbr', ignoreDuplicates: true })
-      if (error) throw error
-      inserted += chunk.length
+        .insert(chunk)
+        .select('id')
+      if (error) {
+        // If duplicate key error, try one-by-one to skip dupes
+        if (error.code === '23505') {
+          for (const row of chunk) {
+            const { error: e2 } = await supabaseAdmin.from('funeral_homes').insert(row)
+            if (!e2) inserted++
+          }
+        } else {
+          throw error
+        }
+      } else {
+        inserted += (data?.length || chunk.length)
+      }
     }
 
     return NextResponse.json({ success: true, inserted })

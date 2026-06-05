@@ -69,21 +69,53 @@ export default function Home() {
   useEffect(() => { fetchHomes() }, [fetchHomes])
   useEffect(() => { fetchStats() }, [fetchStats])
 
+  const parseCSV = (text: string): Record<string, string>[] => {
+    const rows: Record<string, string>[] = []
+    const lines = text.replace(/\r\n/g, '\n').replace(/\r/g, '\n').split('\n')
+    if (!lines.length) return rows
+
+    // Proper CSV parser that handles quoted fields
+    const parseLine = (line: string): string[] => {
+      const fields: string[] = []
+      let field = ''
+      let inQuotes = false
+      for (let i = 0; i < line.length; i++) {
+        const ch = line[i]
+        if (ch === '"') {
+          if (inQuotes && line[i + 1] === '"') { field += '"'; i++ }
+          else inQuotes = !inQuotes
+        } else if (ch === ',' && !inQuotes) {
+          fields.push(field.trim()); field = ''
+        } else {
+          field += ch
+        }
+      }
+      fields.push(field.trim())
+      return fields
+    }
+
+    const headers = parseLine(lines[0])
+    for (let i = 1; i < lines.length; i++) {
+      if (!lines[i].trim()) continue
+      const vals = parseLine(lines[i])
+      rows.push(Object.fromEntries(headers.map((h, j) => [h.trim(), vals[j]?.trim() || ''])))
+    }
+    return rows
+  }
+
   const handleImport = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0]
     if (!file) return
     setImporting(true)
     setImportMsg('Parsing CSV…')
     const text = await file.text()
-    const lines = text.split('\n').filter(Boolean)
-    const headers = lines[0].split(',').map(h => h.trim().replace(/"/g, ''))
-    const rows = lines.slice(1).map(line => {
-      const vals = line.split(',').map(v => v.trim().replace(/"/g, ''))
-      return Object.fromEntries(headers.map((h, i) => [h, vals[i] || '']))
-    })
+    const rows = parseCSV(text)
+    if (!rows.length) { setImportMsg('❌ Could not parse CSV — check the file format.'); setImporting(false); return }
+
     setImportMsg(`Importing ${rows.length.toLocaleString()} rows…`)
-    const BATCH = 1000
+    const BATCH = 500
     let done = 0
+    let errors = 0
     for (let i = 0; i < rows.length; i += BATCH) {
       const chunk = rows.slice(i, i + BATCH)
       const res = await fetch('/api/import', {
@@ -91,10 +123,11 @@ export default function Home() {
         body: JSON.stringify({ rows: chunk })
       })
       const json = await res.json()
-      done += json.inserted || chunk.length
-      setImportMsg(`Imported ${done.toLocaleString()} / ${rows.length.toLocaleString()}…`)
+      if (json.error) { errors++; console.error('Import error:', json.error) }
+      done += json.inserted || 0
+      setImportMsg(`Imported ${done.toLocaleString()} / ${rows.length.toLocaleString()}…${errors ? ` (${errors} errors)` : ''}`)
     }
-    setImportMsg(`✅ Done! ${done.toLocaleString()} records imported.`)
+    setImportMsg(`✅ Done! ${done.toLocaleString()} records imported.${errors ? ` ⚠️ ${errors} batch errors — check console.` : ''}`)
     setImporting(false)
     fetchStats(); fetchHomes()
     e.target.value = ''
