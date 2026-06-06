@@ -198,16 +198,17 @@ export default function Home() {
 
       {/* Stats bar */}
       {stats && (
-        <div className="bg-white border-b px-6 py-3 flex gap-6 overflow-x-auto">
-          <StatChip icon={<Building2 className="w-4 h-4" />} label="Total"    value={stats.total.toLocaleString()} />
-          <StatChip icon={<Phone className="w-4 h-4" />}     label="Phone"    value={stats.with_phone.toLocaleString()} color="text-green-600" />
-          <StatChip icon={<Mail className="w-4 h-4" />}      label="Email"    value={stats.with_email.toLocaleString()} color="text-green-600" />
-          <StatChip icon={<BookOpen className="w-4 h-4" />}  label="Obits"    value={stats.with_obits.toLocaleString()} color="text-blue-600" />
-          <StatChip icon={<Users className="w-4 h-4" />}     label="Prospects" value={(stats.by_status?.prospect || 0).toLocaleString()} color="text-blue-600" />
-          <StatChip icon={<TrendingUp className="w-4 h-4" />} label="Customers" value={(stats.by_status?.existing_customer || 0).toLocaleString()} color="text-green-600" />
-          {Object.entries(stats.by_software || {}).map(([sw, count]) => (
-            <StatChip key={sw} icon={<Globe className="w-4 h-4" />} label={sw} value={count.toLocaleString()} color="text-purple-600" />
-          ))}
+        <div className="bg-white border-b px-6 py-4 flex gap-8">
+          <StatChip icon={<Building2 className="w-4 h-4" />} label="Total"      value={stats.total.toLocaleString()} />
+          <div className="w-px bg-gray-100" />
+          <StatChip icon={<BookOpen className="w-4 h-4" />}  label="With Obits" value={stats.with_obits.toLocaleString()} color="text-blue-600" />
+          <StatChip icon={<Phone className="w-4 h-4" />}     label="With Phone" value={stats.with_phone.toLocaleString()} color="text-green-600" />
+          <StatChip icon={<Mail className="w-4 h-4" />}      label="With Email" value={stats.with_email.toLocaleString()} color="text-green-600" />
+          <div className="w-px bg-gray-100" />
+          <StatChip icon={<Users className="w-4 h-4" />}        label="Prospects"  value={(stats.by_status?.prospect || 0).toLocaleString()}          color="text-blue-600" />
+          <StatChip icon={<TrendingUp className="w-4 h-4" />}   label="Contacted"  value={(stats.by_status?.contacted || 0).toLocaleString()}          color="text-yellow-600" />
+          <StatChip icon={<TrendingUp className="w-4 h-4" />}   label="Qualified"  value={(stats.by_status?.qualified || 0).toLocaleString()}          color="text-purple-600" />
+          <StatChip icon={<TrendingUp className="w-4 h-4" />}   label="Customers"  value={(stats.by_status?.existing_customer || 0).toLocaleString()}  color="text-green-600" />
         </div>
       )}
 
