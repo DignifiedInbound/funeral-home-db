@@ -9,7 +9,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import {
   Search, Phone, Globe, MapPin, Star,
   BookOpen, ChevronLeft, ChevronRight, Download,
-  RefreshCw, Upload, Building2, Users, TrendingUp, Loader2, Mail
+  RefreshCw, Upload, Building2, Users, TrendingUp, Loader2, Mail, Sparkles
 } from 'lucide-react'
 
 const US_STATES = ['AL','AK','AZ','AR','CA','CO','CT','DE','FL','GA','HI','ID','IL','IN',
@@ -45,6 +45,8 @@ export default function Home() {
   const [loading, setLoading]       = useState(false)
   const [importing, setImporting]   = useState(false)
   const [importMsg, setImportMsg]   = useState('')
+  const [enriching, setEnriching]   = useState(false)
+  const [enrichMsg, setEnrichMsg]   = useState('')
   const [filters, setFilters]       = useState<FuneralHomeFilters>({
     page: 1, per_page: 50, sort_by: 'obits_count', sort_dir: 'desc'
   })
@@ -153,6 +155,25 @@ export default function Home() {
     a.click()
   }
 
+  const handleEnrich = async (batchSize = 50) => {
+    setEnriching(true)
+    setEnrichMsg(`Enriching next ${batchSize} records with Google data…`)
+    try {
+      const res = await fetch('/api/enrich', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ limit: batchSize }),
+      })
+      const json = await res.json()
+      if (json.error) setEnrichMsg(`❌ ${json.error}`)
+      else setEnrichMsg(`✅ Enriched ${json.enriched}/${json.total} records. ${json.groups} multi-location groups found.`)
+    } catch (e) {
+      setEnrichMsg(`❌ Network error`)
+    }
+    setEnriching(false)
+    fetchStats(); fetchHomes()
+  }
+
   const updateStatus = async (id: string, lead_status: string) => {
     await fetch(`/api/funeral-homes/${id}`, {
       method: 'PATCH', headers: { 'Content-Type': 'application/json' },
@@ -183,6 +204,11 @@ export default function Home() {
           <Button variant="outline" size="sm" onClick={handleExport}>
             <Download className="w-4 h-4 mr-1" />Export
           </Button>
+          <Button variant="outline" size="sm" disabled={enriching} onClick={() => handleEnrich(50)}
+            className="text-violet-700 border-violet-200 hover:bg-violet-50">
+            {enriching ? <Loader2 className="w-4 h-4 mr-1 animate-spin" /> : <Sparkles className="w-4 h-4 mr-1" />}
+            Enrich 50
+          </Button>
           <Button variant="outline" size="sm" onClick={() => { fetchStats(); fetchHomes() }}>
             <RefreshCw className="w-4 h-4" />
           </Button>
@@ -193,6 +219,12 @@ export default function Home() {
         <div className="bg-blue-50 border-b border-blue-200 px-6 py-2 text-sm text-blue-700 flex items-center gap-2">
           {importing && <Loader2 className="w-4 h-4 animate-spin" />}
           {importMsg}
+        </div>
+      )}
+      {enrichMsg && (
+        <div className="bg-violet-50 border-b border-violet-200 px-6 py-2 text-sm text-violet-700 flex items-center gap-2">
+          {enriching && <Loader2 className="w-4 h-4 animate-spin" />}
+          {enrichMsg}
         </div>
       )}
 
@@ -269,7 +301,7 @@ export default function Home() {
         <table className="w-full text-sm">
           <thead className="bg-gray-50 border-b">
             <tr>
-              {['Name','Location','Obits','Reviews','Phone','Software','Status','Website'].map(h => (
+              {['Name','Address','Obits','Reviews','Phone','Software','Status','Website'].map(h => (
                 <th key={h} className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wide whitespace-nowrap">{h}</th>
               ))}
             </tr>
@@ -288,13 +320,27 @@ export default function Home() {
               <tr key={home.id} className="hover:bg-gray-50 transition-colors">
                 <td className="px-4 py-3 font-medium text-gray-900 max-w-xs">
                   <div className="truncate">{home.name}</div>
-                  {home.source && <div className="text-xs text-gray-400 mt-0.5">{home.source}</div>}
-                </td>
-                <td className="px-4 py-3 text-gray-600 whitespace-nowrap">
-                  <div className="flex items-center gap-1 text-xs">
-                    <MapPin className="w-3 h-3" />
-                    {[home.city, home.state_abbr].filter(Boolean).join(', ') || '—'}
+                  <div className="flex items-center gap-2 mt-0.5">
+                    {home.source && <span className="text-xs text-gray-400">{home.source}</span>}
+                    {home.location_count != null && home.location_count > 1 && (
+                      <span className="text-xs bg-indigo-100 text-indigo-700 px-1.5 py-0.5 rounded font-medium">
+                        {home.location_count} locations
+                      </span>
+                    )}
+                    {home.maps_place_id && (
+                      <a href={`https://maps.google.com/?q=place_id:${home.maps_place_id}`}
+                        target="_blank" rel="noopener noreferrer" className="text-xs text-gray-400 hover:text-gray-600">📍</a>
+                    )}
                   </div>
+                </td>
+                <td className="px-4 py-3 text-gray-600 max-w-[200px]">
+                  {home.address
+                    ? <div className="text-xs leading-tight truncate" title={home.address}>{home.address}</div>
+                    : <div className="flex items-center gap-1 text-xs text-gray-400">
+                        <MapPin className="w-3 h-3" />
+                        {[home.city, home.state_abbr].filter(Boolean).join(', ') || '—'}
+                      </div>
+                  }
                 </td>
                 <td className="px-4 py-3 text-right">
                   {home.obits_count

@@ -29,6 +29,9 @@ export interface FuneralHome {
   echovita_url: string | null
   legacy_url: string | null
   maps_place_id: string | null
+  google_place_id: string | null
+  location_count: number | null
+  parent_company: string | null
   lead_status: LeadStatus
   priority_score: number
   notes: string | null
