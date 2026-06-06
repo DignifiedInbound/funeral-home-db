@@ -10,7 +10,7 @@ import {
   Search, Phone, Globe, MapPin, Star,
   BookOpen, ChevronLeft, ChevronRight, Download,
   RefreshCw, Upload, Building2, Users, TrendingUp, Loader2, Mail, Sparkles, GitBranch,
-  ChevronDown, ChevronRight as ChevronRightIcon, ExternalLink
+  ChevronDown, ChevronRight as ChevronRightIcon, ExternalLink, ScanSearch
 } from 'lucide-react'
 
 const US_STATES = ['AL','AK','AZ','AR','CA','CO','CT','DE','FL','GA','HI','ID','IL','IN',
@@ -50,6 +50,8 @@ export default function Home() {
   const [enrichMsg, setEnrichMsg]     = useState('')
   const [detecting, setDetecting]     = useState(false)
   const [detectMsg, setDetectMsg]     = useState('')
+  const [scraping, setScraping]       = useState(false)
+  const [scrapeMsg, setScrapeMsg]     = useState('')
   const [expanded, setExpanded]       = useState<Record<string, boolean>>({})
   const [siblings, setSiblings]       = useState<Record<string, FuneralHome[]>>({})
   const [loadingSiblings, setLoadingSiblings] = useState<Record<string, boolean>>({})
@@ -198,6 +200,28 @@ export default function Home() {
     setLoadingSiblings(prev => ({ ...prev, [id]: false }))
   }
 
+  const handleScrape = async (batchSize = 10) => {
+    setScraping(true)
+    setScrapeMsg(`Scraping ${batchSize} websites for software, obituaries & locations…`)
+    try {
+      const res = await fetch('/api/scrape', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ limit: batchSize }),
+      })
+      const json = await res.json()
+      if (json.error) setScrapeMsg(`❌ ${json.error}`)
+      else if (json.message) setScrapeMsg(`ℹ️ ${json.message}`)
+      else {
+        const summary = (json.results as Array<{name:string;software:string|null;obits:number;locations:number}>)
+          .map(r => `${r.name}: ${r.software || '?'}, ${r.obits} obits, ${r.locations} locs`).join(' · ')
+        setScrapeMsg(`✅ Scraped ${json.scraped}/${json.total}  —  ${summary}`)
+      }
+    } catch { setScrapeMsg(`❌ Network error`) }
+    setScraping(false)
+    fetchHomes()
+  }
+
   const handleEnrich = async (batchSize = 50) => {
     setEnriching(true)
     setEnrichMsg(`Enriching next ${batchSize} records with Google data…`)
@@ -257,6 +281,11 @@ export default function Home() {
             {detecting ? <Loader2 className="w-4 h-4 mr-1 animate-spin" /> : <GitBranch className="w-4 h-4 mr-1" />}
             Find Locations
           </Button>
+          <Button variant="outline" size="sm" disabled={scraping} onClick={() => handleScrape(10)}
+            className="text-emerald-700 border-emerald-200 hover:bg-emerald-50">
+            {scraping ? <Loader2 className="w-4 h-4 mr-1 animate-spin" /> : <ScanSearch className="w-4 h-4 mr-1" />}
+            Scrape 10
+          </Button>
           <Button variant="outline" size="sm" onClick={() => { fetchStats(); fetchHomes() }}>
             <RefreshCw className="w-4 h-4" />
           </Button>
@@ -279,6 +308,12 @@ export default function Home() {
         <div className="bg-indigo-50 border-b border-indigo-200 px-6 py-2 text-sm text-indigo-700 flex items-center gap-2">
           {detecting && <Loader2 className="w-4 h-4 animate-spin" />}
           {detectMsg}
+        </div>
+      )}
+      {scrapeMsg && (
+        <div className="bg-emerald-50 border-b border-emerald-200 px-6 py-2 text-sm text-emerald-700 flex items-center gap-2 flex-wrap">
+          {scraping && <Loader2 className="w-4 h-4 animate-spin flex-shrink-0" />}
+          {scrapeMsg}
         </div>
       )}
 
@@ -418,7 +453,11 @@ export default function Home() {
                 <td className="px-4 py-3 text-right">
                   {home.obits_count
                     ? <span className="font-semibold text-blue-700 font-mono">{home.obits_count.toLocaleString()}</span>
-                    : '—'}
+                    : (home as unknown as Record<string,unknown>)['website_obit_count']
+                      ? <span className="text-gray-500 font-mono text-xs" title="From website scrape">
+                          ~{((home as unknown as Record<string,unknown>)['website_obit_count'] as number).toLocaleString()}
+                        </span>
+                      : '—'}
                 </td>
                 <td className="px-4 py-3">
                   {home.google_reviews && home.maps_place_id ? (
@@ -445,11 +484,18 @@ export default function Home() {
                     : <span className="text-gray-300 text-xs">—</span>}
                 </td>
                 <td className="px-4 py-3">
-                  {home.software_detected
-                    ? <Badge className={`text-xs ${SOFTWARE_COLORS[home.software_detected] || 'bg-gray-100 text-gray-600'}`}>
-                        {home.software_detected}
-                      </Badge>
-                    : '—'}
+                  {(() => {
+                    const sw = home.software_detected || (home as unknown as Record<string,unknown>)['website_software'] as string | null
+                    const scraped = !home.software_detected && sw
+                    return sw
+                      ? <Badge className={`text-xs ${SOFTWARE_COLORS[sw] || 'bg-gray-100 text-gray-600'} ${scraped ? 'opacity-70' : ''}`}
+                          title={scraped ? 'Detected via website scrape' : 'From source data'}>
+                          {sw}{scraped ? ' *' : ''}
+                        </Badge>
+                      : (home as unknown as Record<string,unknown>)['last_scraped_at']
+                        ? <span className="text-xs text-gray-300">none</span>
+                        : '—'
+                  })()}
                 </td>
                 <td className="px-4 py-3">
                   <select

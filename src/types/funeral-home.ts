@@ -36,6 +36,11 @@ export interface FuneralHome {
   priority_score: number
   notes: string | null
   last_enriched_at: string | null
+  website_software: string | null
+  website_obit_count: number | null
+  website_locations: Array<{name: string; address: string | null}> | null
+  website_scrape_status: string | null
+  last_scraped_at: string | null
   created_at: string
   updated_at: string
   computed_score?: number
