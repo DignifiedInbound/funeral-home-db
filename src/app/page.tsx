@@ -9,7 +9,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import {
   Search, Phone, Globe, MapPin, Star,
   BookOpen, ChevronLeft, ChevronRight, Download,
-  RefreshCw, Upload, Building2, Users, TrendingUp, Loader2, Mail, Sparkles
+  RefreshCw, Upload, Building2, Users, TrendingUp, Loader2, Mail, Sparkles, GitBranch
 } from 'lucide-react'
 
 const US_STATES = ['AL','AK','AZ','AR','CA','CO','CT','DE','FL','GA','HI','ID','IL','IN',
@@ -45,8 +45,10 @@ export default function Home() {
   const [loading, setLoading]       = useState(false)
   const [importing, setImporting]   = useState(false)
   const [importMsg, setImportMsg]   = useState('')
-  const [enriching, setEnriching]   = useState(false)
-  const [enrichMsg, setEnrichMsg]   = useState('')
+  const [enriching, setEnriching]     = useState(false)
+  const [enrichMsg, setEnrichMsg]     = useState('')
+  const [detecting, setDetecting]     = useState(false)
+  const [detectMsg, setDetectMsg]     = useState('')
   const [filters, setFilters]       = useState<FuneralHomeFilters>({
     page: 1, per_page: 50, sort_by: 'obits_count', sort_dir: 'desc'
   })
@@ -155,6 +157,26 @@ export default function Home() {
     a.click()
   }
 
+  const handleDetectLocations = async (batchSize = 10) => {
+    setDetecting(true)
+    setDetectMsg(`Detecting multi-location businesses (${batchSize} records)…`)
+    try {
+      const res = await fetch('/api/locations', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ limit: batchSize }),
+      })
+      const json = await res.json()
+      if (json.error) setDetectMsg(`❌ ${json.error}`)
+      else if (json.message) setDetectMsg(`ℹ️ ${json.message}`)
+      else setDetectMsg(`✅ Processed ${json.processed} records — ${json.new_locations} new locations discovered.`)
+    } catch {
+      setDetectMsg(`❌ Network error`)
+    }
+    setDetecting(false)
+    fetchStats(); fetchHomes()
+  }
+
   const handleEnrich = async (batchSize = 50) => {
     setEnriching(true)
     setEnrichMsg(`Enriching next ${batchSize} records with Google data…`)
@@ -209,6 +231,11 @@ export default function Home() {
             {enriching ? <Loader2 className="w-4 h-4 mr-1 animate-spin" /> : <Sparkles className="w-4 h-4 mr-1" />}
             Enrich 50
           </Button>
+          <Button variant="outline" size="sm" disabled={detecting} onClick={() => handleDetectLocations(10)}
+            className="text-indigo-700 border-indigo-200 hover:bg-indigo-50">
+            {detecting ? <Loader2 className="w-4 h-4 mr-1 animate-spin" /> : <GitBranch className="w-4 h-4 mr-1" />}
+            Find Locations
+          </Button>
           <Button variant="outline" size="sm" onClick={() => { fetchStats(); fetchHomes() }}>
             <RefreshCw className="w-4 h-4" />
           </Button>
@@ -225,6 +252,12 @@ export default function Home() {
         <div className="bg-violet-50 border-b border-violet-200 px-6 py-2 text-sm text-violet-700 flex items-center gap-2">
           {enriching && <Loader2 className="w-4 h-4 animate-spin" />}
           {enrichMsg}
+        </div>
+      )}
+      {detectMsg && (
+        <div className="bg-indigo-50 border-b border-indigo-200 px-6 py-2 text-sm text-indigo-700 flex items-center gap-2">
+          {detecting && <Loader2 className="w-4 h-4 animate-spin" />}
+          {detectMsg}
         </div>
       )}
 
@@ -334,12 +367,19 @@ export default function Home() {
                   </div>
                 </td>
                 <td className="px-4 py-3 text-gray-600 max-w-[200px]">
-                  {home.address
-                    ? <div className="text-xs leading-tight truncate" title={home.address}>{home.address}</div>
-                    : <div className="flex items-center gap-1 text-xs text-gray-400">
-                        <MapPin className="w-3 h-3" />
-                        {[home.city, home.state_abbr].filter(Boolean).join(', ') || '—'}
-                      </div>
+                  {home.address && home.maps_place_id
+                    ? <a href={`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(home.name)}&query_place_id=${home.maps_place_id}`}
+                        target="_blank" rel="noopener noreferrer"
+                        className="flex items-start gap-1 text-xs text-blue-600 hover:underline leading-tight group">
+                        <MapPin className="w-3 h-3 flex-shrink-0 mt-0.5 group-hover:text-blue-700" />
+                        <span className="truncate" title={home.address}>{home.address}</span>
+                      </a>
+                    : home.address
+                      ? <div className="text-xs leading-tight truncate text-gray-500" title={home.address}>{home.address}</div>
+                      : <div className="flex items-center gap-1 text-xs text-gray-400">
+                          <MapPin className="w-3 h-3" />
+                          {[home.city, home.state_abbr].filter(Boolean).join(', ') || '—'}
+                        </div>
                   }
                 </td>
                 <td className="px-4 py-3 text-right">
@@ -348,11 +388,19 @@ export default function Home() {
                     : '—'}
                 </td>
                 <td className="px-4 py-3">
-                  {home.google_reviews ? (
+                  {home.google_reviews && home.maps_place_id ? (
+                    <a href={`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(home.name)}&query_place_id=${home.maps_place_id}`}
+                       target="_blank" rel="noopener noreferrer"
+                       className="flex items-center gap-1 text-xs hover:underline">
+                      <Star className="w-3 h-3 text-yellow-500 fill-yellow-500" />
+                      <span className="font-medium text-gray-700">{home.google_rating?.toFixed(1)}</span>
+                      <span className="text-gray-400">({home.google_reviews.toLocaleString()})</span>
+                    </a>
+                  ) : home.google_reviews ? (
                     <div className="flex items-center gap-1 text-xs">
                       <Star className="w-3 h-3 text-yellow-500 fill-yellow-500" />
                       <span>{home.google_rating?.toFixed(1)}</span>
-                      <span className="text-gray-400">({home.google_reviews})</span>
+                      <span className="text-gray-400">({home.google_reviews.toLocaleString()})</span>
                     </div>
                   ) : '—'}
                 </td>
@@ -381,17 +429,30 @@ export default function Home() {
                     ))}
                   </select>
                 </td>
-                <td className="px-4 py-3">
+                <td className="px-4 py-3 max-w-[160px]">
                   {home.website
-                    ? <a href={home.website} target="_blank" rel="noopener noreferrer"
-                        className="flex items-center gap-1 text-xs text-blue-600 hover:underline max-w-32 truncate">
-                        <Globe className="w-3 h-3 flex-shrink-0" />
-                        {home.website.replace(/^https?:\/\/(www\.)?/, '')}
-                      </a>
+                    ? <div className="space-y-0.5">
+                        <a href={home.website} target="_blank" rel="noopener noreferrer"
+                          className="flex items-center gap-1 text-xs text-blue-600 hover:underline truncate">
+                          <Globe className="w-3 h-3 flex-shrink-0" />
+                          <span className="truncate">{home.website.replace(/^https?:\/\/(www\.)?/, '').replace(/\/$/, '')}</span>
+                        </a>
+                        {home.echovita_url && (
+                          <a href={home.echovita_url} target="_blank" rel="noopener noreferrer"
+                            className="text-xs text-gray-400 hover:text-gray-600 block">Echovita ↗</a>
+                        )}
+                        {home.legacy_url && (
+                          <a href={home.legacy_url} target="_blank" rel="noopener noreferrer"
+                            className="text-xs text-gray-400 hover:text-gray-600 block">Legacy ↗</a>
+                        )}
+                      </div>
                     : home.echovita_url
                       ? <a href={home.echovita_url} target="_blank" rel="noopener noreferrer"
                           className="text-xs text-gray-400 hover:text-gray-600">Echovita ↗</a>
-                      : '—'}
+                      : home.legacy_url
+                        ? <a href={home.legacy_url} target="_blank" rel="noopener noreferrer"
+                            className="text-xs text-gray-400 hover:text-gray-600">Legacy ↗</a>
+                        : '—'}
                 </td>
               </tr>
             ))}
