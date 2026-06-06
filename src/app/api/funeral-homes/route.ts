@@ -21,8 +21,13 @@ export async function GET(req: NextRequest) {
     sort_dir:   (searchParams.get('sort_dir')  || 'desc') as 'asc' | 'desc',
   }
 
+  const parentCompany = searchParams.get('parent_company') || undefined
+
   let query = supabaseAdmin.from('funeral_homes').select('*', { count: 'exact' })
 
+  if (parentCompany) {
+    query = query.eq('parent_company', parentCompany)
+  }
   if (filters.search) {
     query = query.ilike('name', `%${filters.search}%`)
   }

@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState, useCallback } from 'react'
+import React, { useEffect, useState, useCallback } from 'react'
 import { FuneralHome, FuneralHomeFilters } from '@/types/funeral-home'
 import { Badge } from '@/components/ui/badge'
 import { Input } from '@/components/ui/input'
@@ -9,7 +9,8 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import {
   Search, Phone, Globe, MapPin, Star,
   BookOpen, ChevronLeft, ChevronRight, Download,
-  RefreshCw, Upload, Building2, Users, TrendingUp, Loader2, Mail, Sparkles, GitBranch
+  RefreshCw, Upload, Building2, Users, TrendingUp, Loader2, Mail, Sparkles, GitBranch,
+  ChevronDown, ChevronRight as ChevronRightIcon, ExternalLink
 } from 'lucide-react'
 
 const US_STATES = ['AL','AK','AZ','AR','CA','CO','CT','DE','FL','GA','HI','ID','IL','IN',
@@ -49,6 +50,9 @@ export default function Home() {
   const [enrichMsg, setEnrichMsg]     = useState('')
   const [detecting, setDetecting]     = useState(false)
   const [detectMsg, setDetectMsg]     = useState('')
+  const [expanded, setExpanded]       = useState<Record<string, boolean>>({})
+  const [siblings, setSiblings]       = useState<Record<string, FuneralHome[]>>({})
+  const [loadingSiblings, setLoadingSiblings] = useState<Record<string, boolean>>({})
   const [filters, setFilters]       = useState<FuneralHomeFilters>({
     page: 1, per_page: 50, sort_by: 'obits_count', sort_dir: 'desc'
   })
@@ -175,6 +179,23 @@ export default function Home() {
     }
     setDetecting(false)
     fetchStats(); fetchHomes()
+  }
+
+  const toggleLocations = async (home: FuneralHome) => {
+    const id = home.id
+    const isOpen = expanded[id]
+    setExpanded(prev => ({ ...prev, [id]: !isOpen }))
+    if (isOpen || siblings[id]) return  // already loaded or closing
+
+    setLoadingSiblings(prev => ({ ...prev, [id]: true }))
+    const brand = (home as unknown as Record<string,unknown>)['parent_company'] as string || home.name
+    const encoded = encodeURIComponent(brand)
+    const res = await fetch(`/api/funeral-homes?parent_company=${encoded}&per_page=50&sort_by=google_reviews&sort_dir=desc`)
+    const json = await res.json()
+    // Exclude self
+    const sibs = (json.data as FuneralHome[]).filter(r => r.id !== id)
+    setSiblings(prev => ({ ...prev, [id]: sibs }))
+    setLoadingSiblings(prev => ({ ...prev, [id]: false }))
   }
 
   const handleEnrich = async (batchSize = 50) => {
@@ -350,20 +371,32 @@ export default function Home() {
                 <span className="text-xs">Import funeral_homes_master.csv to get started.</span>
               </td></tr>
             ) : homes.map(home => (
-              <tr key={home.id} className="hover:bg-gray-50 transition-colors">
+              <React.Fragment key={home.id}>
+              <tr className={`hover:bg-gray-50 transition-colors ${expanded[home.id] ? 'bg-indigo-50/40' : ''}`}>
                 <td className="px-4 py-3 font-medium text-gray-900 max-w-xs">
-                  <div className="truncate">{home.name}</div>
-                  <div className="flex items-center gap-2 mt-0.5">
-                    {home.source && <span className="text-xs text-gray-400">{home.source}</span>}
-                    {home.location_count != null && home.location_count > 1 && (
-                      <span className="text-xs bg-indigo-100 text-indigo-700 px-1.5 py-0.5 rounded font-medium">
-                        {home.location_count} locations
-                      </span>
+                  <div className="flex items-start gap-1.5">
+                    {home.location_count != null && home.location_count > 1 ? (
+                      <button onClick={() => toggleLocations(home)}
+                        className="mt-0.5 flex-shrink-0 text-indigo-500 hover:text-indigo-700 transition-colors">
+                        {expanded[home.id]
+                          ? <ChevronDown className="w-4 h-4" />
+                          : <ChevronRightIcon className="w-4 h-4" />}
+                      </button>
+                    ) : (
+                      <span className="w-4 flex-shrink-0" />
                     )}
-                    {home.maps_place_id && (
-                      <a href={`https://maps.google.com/?q=place_id:${home.maps_place_id}`}
-                        target="_blank" rel="noopener noreferrer" className="text-xs text-gray-400 hover:text-gray-600">📍</a>
-                    )}
+                    <div className="min-w-0">
+                      <div className="truncate">{home.name}</div>
+                      <div className="flex items-center gap-2 mt-0.5">
+                        {home.source && <span className="text-xs text-gray-400">{home.source}</span>}
+                        {home.location_count != null && home.location_count > 1 && (
+                          <button onClick={() => toggleLocations(home)}
+                            className="text-xs bg-indigo-100 text-indigo-700 px-1.5 py-0.5 rounded font-medium hover:bg-indigo-200 transition-colors">
+                            {home.location_count} locations
+                          </button>
+                        )}
+                      </div>
+                    </div>
                   </div>
                 </td>
                 <td className="px-4 py-3 text-gray-600 max-w-[200px]">
@@ -455,6 +488,36 @@ export default function Home() {
                         : '—'}
                 </td>
               </tr>
+
+              {/* ── Collapsible sibling locations ── */}
+              {expanded[home.id] && (
+                <tr key={`${home.id}-locations`}>
+                  <td colSpan={8} className="px-0 py-0 bg-indigo-50/60 border-b border-indigo-100">
+                    {loadingSiblings[home.id] ? (
+                      <div className="flex items-center gap-2 px-10 py-3 text-xs text-indigo-500">
+                        <Loader2 className="w-3.5 h-3.5 animate-spin" /> Loading locations…
+                      </div>
+                    ) : (
+                      <div className="px-6 py-3">
+                        <div className="text-xs font-semibold text-indigo-600 mb-2 flex items-center gap-1.5">
+                          <GitBranch className="w-3.5 h-3.5" />
+                          {(home as unknown as Record<string,unknown>)['parent_company'] as string || home.name}
+                          <span className="font-normal text-indigo-400">· {(siblings[home.id]?.length ?? 0) + 1} locations total</span>
+                        </div>
+                        <div className="grid gap-1">
+                          {/* Self row */}
+                          <LocationRow home={home} isSelf />
+                          {/* Siblings */}
+                          {(siblings[home.id] || []).map(sib => (
+                            <LocationRow key={sib.id} home={sib} />
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                  </td>
+                </tr>
+              )}
+              </React.Fragment>
             ))}
           </tbody>
         </table>
@@ -475,6 +538,78 @@ export default function Home() {
             <ChevronRight className="w-4 h-4" />
           </Button>
         </div>
+      </div>
+    </div>
+  )
+}
+
+function LocationRow({ home, isSelf = false }: { home: FuneralHome; isSelf?: boolean }) {
+  const mapsUrl = home.maps_place_id
+    ? `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(home.name)}&query_place_id=${home.maps_place_id}`
+    : null
+
+  return (
+    <div className={`flex items-center gap-3 py-1.5 px-3 rounded-md text-xs ${isSelf ? 'bg-indigo-100/60 font-medium' : 'bg-white/70 hover:bg-white'}`}>
+      {/* Name + self badge */}
+      <div className="w-52 flex-shrink-0 flex items-center gap-1.5 min-w-0">
+        {isSelf && <span className="text-[10px] bg-indigo-500 text-white px-1 py-0.5 rounded flex-shrink-0">this</span>}
+        <span className="truncate text-gray-800">{home.name}</span>
+      </div>
+
+      {/* Address → Google Business Profile */}
+      <div className="flex-1 min-w-0">
+        {home.address && mapsUrl ? (
+          <a href={mapsUrl} target="_blank" rel="noopener noreferrer"
+            className="flex items-center gap-1 text-blue-600 hover:underline truncate group">
+            <MapPin className="w-3 h-3 flex-shrink-0 text-blue-400" />
+            <span className="truncate">{home.address}</span>
+            <ExternalLink className="w-2.5 h-2.5 flex-shrink-0 opacity-0 group-hover:opacity-100 transition-opacity" />
+          </a>
+        ) : (
+          <span className="text-gray-400">{home.address || [home.city, home.state_abbr].filter(Boolean).join(', ') || '—'}</span>
+        )}
+      </div>
+
+      {/* Reviews */}
+      <div className="w-24 flex-shrink-0">
+        {home.google_reviews && mapsUrl ? (
+          <a href={mapsUrl} target="_blank" rel="noopener noreferrer"
+            className="flex items-center gap-1 hover:underline">
+            <Star className="w-3 h-3 text-yellow-500 fill-yellow-500" />
+            <span className="text-gray-700">{home.google_rating?.toFixed(1)}</span>
+            <span className="text-gray-400">({home.google_reviews.toLocaleString()})</span>
+          </a>
+        ) : <span className="text-gray-300">—</span>}
+      </div>
+
+      {/* Phone */}
+      <div className="w-32 flex-shrink-0">
+        {home.phone
+          ? <a href={`tel:${home.phone}`} className="flex items-center gap-1 text-green-700 hover:underline">
+              <Phone className="w-3 h-3" />{home.phone}
+            </a>
+          : <span className="text-gray-300">—</span>}
+      </div>
+
+      {/* Website */}
+      <div className="w-36 flex-shrink-0 min-w-0">
+        {home.website
+          ? <a href={home.website} target="_blank" rel="noopener noreferrer"
+              className="flex items-center gap-1 text-blue-600 hover:underline truncate">
+              <Globe className="w-3 h-3 flex-shrink-0" />
+              <span className="truncate">{home.website.replace(/^https?:\/\/(www\.)?/, '').replace(/\/$/, '')}</span>
+            </a>
+          : <span className="text-gray-300">—</span>}
+      </div>
+
+      {/* Source badge */}
+      <div className="w-24 flex-shrink-0">
+        <span className={`text-[10px] px-1.5 py-0.5 rounded ${
+          home.source === 'google_locations' ? 'bg-green-100 text-green-700' :
+          home.source === 'echovita' ? 'bg-blue-100 text-blue-700' :
+          home.source === 'parting_pro' ? 'bg-violet-100 text-violet-700' :
+          'bg-gray-100 text-gray-500'
+        }`}>{home.source}</span>
       </div>
     </div>
   )
