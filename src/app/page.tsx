@@ -9,8 +9,8 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import {
   Search, Phone, Globe, MapPin, Star,
   BookOpen, ChevronLeft, ChevronRight, Download,
-  RefreshCw, Upload, Building2, Users, TrendingUp, Loader2, Mail, Sparkles, GitBranch,
-  ChevronDown, ChevronRight as ChevronRightIcon, ExternalLink, ScanSearch
+  RefreshCw, Upload, Building2, Users, TrendingUp, Loader2, Mail, X,
+  ExternalLink, FlaskConical
 } from 'lucide-react'
 
 const US_STATES = ['AL','AK','AZ','AR','CA','CO','CT','DE','FL','GA','HI','ID','IL','IN',
@@ -66,6 +66,8 @@ interface Stats {
   by_status: Record<string, number>; by_software: Record<string, number>
 }
 
+type ResearchStep = '' | 'enrich' | 'locations' | 'scrape' | 'done'
+
 export default function Home() {
   const [homes, setHomes]           = useState<FuneralHome[]>([])
   const [total, setTotal]           = useState(0)
@@ -74,19 +76,18 @@ export default function Home() {
   const [loading, setLoading]       = useState(false)
   const [importing, setImporting]   = useState(false)
   const [importMsg, setImportMsg]   = useState('')
-  const [enriching, setEnriching]     = useState(false)
-  const [enrichMsg, setEnrichMsg]     = useState('')
-  const [detecting, setDetecting]     = useState(false)
-  const [detectMsg, setDetectMsg]     = useState('')
-  const [scraping, setScraping]       = useState(false)
-  const [scrapeMsg, setScrapeMsg]     = useState('')
-  const [expanded, setExpanded]       = useState<Record<string, boolean>>({})
-  const [siblings, setSiblings]       = useState<Record<string, FuneralHome[]>>({})
-  const [loadingSiblings, setLoadingSiblings] = useState<Record<string, boolean>>({})
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
   const [filters, setFilters]       = useState<FuneralHomeFilters>({
     page: 1, per_page: 50, sort_by: 'obits_count', sort_dir: 'desc'
   })
+
+  // Research pipeline state
+  const [researching, setResearching]   = useState(false)
+  const [researchStep, setResearchStep] = useState<ResearchStep>('')
+  const [researchMsg, setResearchMsg]   = useState('')
+
+  // Detail panel
+  const [selectedHome, setSelectedHome] = useState<FuneralHome | null>(null)
 
   const fetchHomes = useCallback(async () => {
     setLoading(true)
@@ -108,12 +109,17 @@ export default function Home() {
   useEffect(() => { fetchHomes() }, [fetchHomes])
   useEffect(() => { fetchStats() }, [fetchStats])
 
+  // Close panel on Escape
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setSelectedHome(null) }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [])
+
   const parseCSV = (text: string): Record<string, string>[] => {
     const rows: Record<string, string>[] = []
     const lines = text.replace(/\r\n/g, '\n').replace(/\r/g, '\n').split('\n')
     if (!lines.length) return rows
-
-    // Proper CSV parser that handles quoted fields
     const parseLine = (line: string): string[] => {
       const fields: string[] = []
       let field = ''
@@ -132,7 +138,6 @@ export default function Home() {
       fields.push(field.trim())
       return fields
     }
-
     const headers = parseLine(lines[0])
     for (let i = 1; i < lines.length; i++) {
       if (!lines[i].trim()) continue
@@ -150,11 +155,9 @@ export default function Home() {
     const text = await file.text()
     const rows = parseCSV(text)
     if (!rows.length) { setImportMsg('❌ Could not parse CSV — check the file format.'); setImporting(false); return }
-
     setImportMsg(`Importing ${rows.length.toLocaleString()} rows…`)
     const BATCH = 500
-    let done = 0
-    let errors = 0
+    let done = 0; let errors = 0
     for (let i = 0; i < rows.length; i += BATCH) {
       const chunk = rows.slice(i, i + BATCH)
       const res = await fetch('/api/import', {
@@ -194,85 +197,43 @@ export default function Home() {
 
   const selCount = selectedIds.size
 
-  const handleDetectLocations = async () => {
+  const handleResearch = async () => {
     const ids = [...selectedIds]
-    const label = ids.length > 0 ? `${ids.length} selected` : '10'
-    setDetecting(true)
-    setDetectMsg(`Finding all Google Maps locations for ${label} businesses…`)
+    setResearching(true)
+
+    // Step 1: Enrich
+    setResearchStep('enrich')
+    setResearchMsg('Step 1/3: Enriching with Google…')
     try {
-      const res = await fetch('/api/locations', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(ids.length > 0 ? { ids } : { limit: 10 }),
-      })
-      const json = await res.json()
-      if (json.error) setDetectMsg(`❌ ${json.error}`)
-      else if (json.message) setDetectMsg(`ℹ️ ${json.message}`)
-      else setDetectMsg(`✅ Processed ${json.processed} records — ${json.new_locations} new sibling locations added.`)
-    } catch { setDetectMsg(`❌ Network error`) }
-    setDetecting(false)
-    setSelectedIds(new Set())
-    fetchStats(); fetchHomes()
-  }
-
-  const toggleLocations = async (home: FuneralHome) => {
-    const id = home.id
-    const isOpen = expanded[id]
-    setExpanded(prev => ({ ...prev, [id]: !isOpen }))
-    if (isOpen || siblings[id]) return  // already loaded or closing
-
-    setLoadingSiblings(prev => ({ ...prev, [id]: true }))
-    const brand = (home as unknown as Record<string,unknown>)['parent_company'] as string || home.name
-    const encoded = encodeURIComponent(brand)
-    const res = await fetch(`/api/funeral-homes?parent_company=${encoded}&per_page=50&sort_by=google_reviews&sort_dir=desc`)
-    const json = await res.json()
-    // Exclude self
-    const sibs = (json.data as FuneralHome[]).filter(r => r.id !== id)
-    setSiblings(prev => ({ ...prev, [id]: sibs }))
-    setLoadingSiblings(prev => ({ ...prev, [id]: false }))
-  }
-
-  const handleScrape = async () => {
-    const ids = [...selectedIds]
-    const label = ids.length > 0 ? `${ids.length} selected` : '10'
-    setScraping(true)
-    setScrapeMsg(`Scraping ${label} websites — detecting software platform, obituary count, locations…`)
-    try {
-      const res = await fetch('/api/scrape', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(ids.length > 0 ? { ids } : { limit: 10 }),
-      })
-      const json = await res.json()
-      if (json.error) setScrapeMsg(`❌ ${json.error}`)
-      else if (json.message) setScrapeMsg(`ℹ️ ${json.message}`)
-      else {
-        const summary = (json.results as Array<{name:string;software:string|null;obits:number;locations:number}>)
-          .map(r => `${r.name}: ${r.software || '?'}, ${r.obits} obits`).join(' · ')
-        setScrapeMsg(`✅ Scraped ${json.scraped}/${json.total} — ${summary}`)
-      }
-    } catch { setScrapeMsg(`❌ Network error`) }
-    setScraping(false)
-    setSelectedIds(new Set())
-    fetchHomes()
-  }
-
-  const handleEnrich = async () => {
-    const ids = [...selectedIds]
-    const label = ids.length > 0 ? `${ids.length} selected` : '50'
-    setEnriching(true)
-    setEnrichMsg(`Looking up ${label} records on Google Business — address, phone, reviews, rating…`)
-    try {
-      const res = await fetch('/api/enrich', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+      await fetch('/api/enrich', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(ids.length > 0 ? { ids } : { limit: 50 }),
       })
-      const json = await res.json()
-      if (json.error) setEnrichMsg(`❌ ${json.error}`)
-      else setEnrichMsg(`✅ Enriched ${json.enriched}/${json.total} records. ${json.groups} multi-location groups found.`)
-    } catch { setEnrichMsg(`❌ Network error`) }
-    setEnriching(false)
+    } catch { /* continue */ }
+
+    // Step 2: Find Locations
+    setResearchStep('locations')
+    setResearchMsg('Step 2/3: Finding locations…')
+    try {
+      await fetch('/api/locations', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(ids.length > 0 ? { ids } : { limit: 10 }),
+      })
+    } catch { /* continue */ }
+
+    // Step 3: Scrape
+    setResearchStep('scrape')
+    setResearchMsg('Step 3/3: Scraping websites…')
+    try {
+      await fetch('/api/scrape', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(ids.length > 0 ? { ids } : { limit: 10 }),
+      })
+    } catch { /* continue */ }
+
+    setResearchStep('done')
+    setResearchMsg('✅ Done')
+    setResearching(false)
     setSelectedIds(new Set())
     fetchStats(); fetchHomes()
   }
@@ -283,6 +244,9 @@ export default function Home() {
       body: JSON.stringify({ lead_status })
     })
     setHomes(prev => prev.map(h => h.id === id ? { ...h, lead_status: lead_status as FuneralHome['lead_status'] } : h))
+    if (selectedHome?.id === id) {
+      setSelectedHome(prev => prev ? { ...prev, lead_status: lead_status as FuneralHome['lead_status'] } : null)
+    }
   }
 
   const setFilter = (key: keyof FuneralHomeFilters, value: string | null | undefined) =>
@@ -290,87 +254,116 @@ export default function Home() {
 
   return (
     <div className="min-h-screen bg-gray-50">
-      {/* Header */}
-      <header className="bg-white border-b px-6 py-4 flex items-center justify-between">
-        <div className="flex items-center gap-3">
-          <Building2 className="w-6 h-6 text-gray-700" />
-          <h1 className="text-xl font-semibold text-gray-900">Funeral Home Database</h1>
-          {stats && <span className="text-sm text-gray-500 ml-2">{stats.total.toLocaleString()} records</span>}
-        </div>
-        <div className="flex items-center gap-2 flex-wrap">
-          {selCount > 0 && (
-            <span className="text-xs font-medium text-gray-500 bg-gray-100 px-2 py-1 rounded-full">
-              {selCount} selected
-            </span>
-          )}
-          <label className="flex items-center gap-2 cursor-pointer">
-            <Button variant="outline" size="sm" disabled={importing} onClick={() => document.getElementById('csv-import')?.click()}>
-              <Upload className="w-4 h-4 mr-1" />Import CSV
-            </Button>
-            <input id="csv-import" type="file" accept=".csv" onChange={handleImport} className="hidden" />
-          </label>
-          <Button variant="outline" size="sm" onClick={handleExport}>
-            <Download className="w-4 h-4 mr-1" />Export
-          </Button>
-
-          {/* ── Enrichment actions ── */}
-          <div className="flex items-center gap-1 border border-gray-200 rounded-lg p-1 bg-gray-50">
-            <ActionButton
-              icon={<Sparkles className="w-3.5 h-3.5" />}
-              label={selCount > 0 ? `Enrich ${selCount}` : 'Enrich 50'}
-              tooltip="Look up each funeral home on Google Business Profile to get verified address, phone number, star rating and review count."
-              color="violet"
-              loading={enriching}
-              onClick={handleEnrich}
-            />
-            <ActionButton
-              icon={<GitBranch className="w-3.5 h-3.5" />}
-              label={selCount > 0 ? `Locations ${selCount}` : 'Find Locations'}
-              tooltip="Search Google Maps for all branches of the same business. Discovers sibling locations (e.g. a chain with 8 chapels) and links them together with a shared location count."
-              color="indigo"
-              loading={detecting}
-              onClick={handleDetectLocations}
-            />
-            <ActionButton
-              icon={<ScanSearch className="w-3.5 h-3.5" />}
-              label={selCount > 0 ? `Scrape ${selCount}` : 'Scrape 10'}
-              tooltip="Visit each funeral home's own website to detect which software platform they use (Tukios, Parting Pro, FuneralOne, etc.), count obituaries, and extract location pages."
-              color="emerald"
-              loading={scraping}
-              onClick={handleScrape}
-            />
+      {/* Sticky header + filter bar */}
+      <div className="sticky top-0 z-40">
+        {/* Header */}
+        <header className="bg-white border-b px-6 py-4 flex items-center justify-between">
+          <div className="flex items-center gap-3">
+            <Building2 className="w-6 h-6 text-gray-700" />
+            <h1 className="text-xl font-semibold text-gray-900">Funeral Home Database</h1>
+            {stats && <span className="text-sm text-gray-500 ml-2">{stats.total.toLocaleString()} records</span>}
           </div>
+          <div className="flex items-center gap-2 flex-wrap">
+            {selCount > 0 && (
+              <span className="text-xs font-medium text-gray-500 bg-gray-100 px-2 py-1 rounded-full">
+                {selCount} selected
+              </span>
+            )}
+            <label className="flex items-center gap-2 cursor-pointer">
+              <Button variant="outline" size="sm" disabled={importing} onClick={() => document.getElementById('csv-import')?.click()}>
+                <Upload className="w-4 h-4 mr-1" />Import CSV
+              </Button>
+              <input id="csv-import" type="file" accept=".csv" onChange={handleImport} className="hidden" />
+            </label>
+            <Button variant="outline" size="sm" onClick={handleExport}>
+              <Download className="w-4 h-4 mr-1" />Export
+            </Button>
 
-          <Button variant="outline" size="sm" onClick={() => { setSelectedIds(new Set()); fetchStats(); fetchHomes() }}>
-            <RefreshCw className="w-4 h-4" />
-          </Button>
-        </div>
-      </header>
+            {/* Research button */}
+            <Button
+              size="sm"
+              disabled={researching}
+              onClick={handleResearch}
+              className="flex items-center gap-1.5 bg-violet-600 hover:bg-violet-700 text-white"
+            >
+              {researching
+                ? <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                : <FlaskConical className="w-3.5 h-3.5" />}
+              {selCount > 0 ? `Research ${selCount}` : 'Research'}
+            </Button>
 
-      {importMsg && (
-        <div className="bg-blue-50 border-b border-blue-200 px-6 py-2 text-sm text-blue-700 flex items-center gap-2">
-          {importing && <Loader2 className="w-4 h-4 animate-spin" />}
-          {importMsg}
+            <Button variant="outline" size="sm" onClick={() => { setSelectedIds(new Set()); fetchStats(); fetchHomes() }}>
+              <RefreshCw className="w-4 h-4" />
+            </Button>
+          </div>
+        </header>
+
+        {/* Progress status bar */}
+        {researchStep && (
+          <div className={`border-b px-6 py-2 text-sm flex items-center gap-2 ${researchStep === 'done' ? 'bg-green-50 border-green-200 text-green-700' : 'bg-violet-50 border-violet-200 text-violet-700'}`}>
+            {researching && <Loader2 className="w-4 h-4 animate-spin" />}
+            {researchMsg}
+          </div>
+        )}
+        {importMsg && (
+          <div className="bg-blue-50 border-b border-blue-200 px-6 py-2 text-sm text-blue-700 flex items-center gap-2">
+            {importing && <Loader2 className="w-4 h-4 animate-spin" />}
+            {importMsg}
+          </div>
+        )}
+
+        {/* Filters */}
+        <div className="bg-white border-b px-6 py-3 flex flex-wrap gap-3 items-center">
+          <div className="relative flex-1 min-w-48">
+            <Search className="absolute left-3 top-2.5 w-4 h-4 text-gray-400" />
+            <Input placeholder="Search funeral homes…" className="pl-9 h-9"
+              onChange={e => setFilter('search', e.target.value || undefined)} />
+          </div>
+          <Select onValueChange={(v: string | null) => setFilter('state', (!v || v === 'all') ? undefined : v)}>
+            <SelectTrigger className="w-28 h-9"><SelectValue placeholder="State" /></SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">All States</SelectItem>
+              {US_STATES.map(s => <SelectItem key={s} value={s}>{s}</SelectItem>)}
+            </SelectContent>
+          </Select>
+          <Select onValueChange={(v: string | null) => setFilter('source', (!v || v === 'all') ? undefined : v)}>
+            <SelectTrigger className="w-36 h-9"><SelectValue placeholder="Source" /></SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">All Sources</SelectItem>
+              {['echovita','legacy_com','parting_pro','efuneral','tukios'].map(s =>
+                <SelectItem key={s} value={s}>{s}</SelectItem>)}
+            </SelectContent>
+          </Select>
+          <Select onValueChange={(v: string | null) => setFilter('lead_status', (!v || v === 'all') ? undefined : v)}>
+            <SelectTrigger className="w-40 h-9"><SelectValue placeholder="Status" /></SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">All Statuses</SelectItem>
+              {['prospect','contacted','qualified','existing_customer','not_a_fit','churned'].map(s =>
+                <SelectItem key={s} value={s}>{s.replace(/_/g,' ')}</SelectItem>)}
+            </SelectContent>
+          </Select>
+          <Select onValueChange={(v: string | null) => setFilter('software', (!v || v === 'all') ? undefined : v)}>
+            <SelectTrigger className="w-36 h-9"><SelectValue placeholder="Software" /></SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">Any Software</SelectItem>
+              <SelectItem value="parting_pro">Parting Pro</SelectItem>
+              <SelectItem value="efuneral">eFuneral</SelectItem>
+              <SelectItem value="tukios">Tukios</SelectItem>
+              <SelectItem value="none">Unknown</SelectItem>
+            </SelectContent>
+          </Select>
+          <Select onValueChange={(v: string | null) => setFilter('sort_by', v || undefined)}>
+            <SelectTrigger className="w-36 h-9"><SelectValue placeholder="Sort by" /></SelectTrigger>
+            <SelectContent>
+              <SelectItem value="obits_count">Obit Volume</SelectItem>
+              <SelectItem value="google_reviews">Reviews</SelectItem>
+              <SelectItem value="name">Name A-Z</SelectItem>
+              <SelectItem value="created_at">Date Added</SelectItem>
+            </SelectContent>
+          </Select>
+          <span className="text-sm text-gray-500 ml-auto">{total.toLocaleString()} results</span>
         </div>
-      )}
-      {enrichMsg && (
-        <div className="bg-violet-50 border-b border-violet-200 px-6 py-2 text-sm text-violet-700 flex items-center gap-2">
-          {enriching && <Loader2 className="w-4 h-4 animate-spin" />}
-          {enrichMsg}
-        </div>
-      )}
-      {detectMsg && (
-        <div className="bg-indigo-50 border-b border-indigo-200 px-6 py-2 text-sm text-indigo-700 flex items-center gap-2">
-          {detecting && <Loader2 className="w-4 h-4 animate-spin" />}
-          {detectMsg}
-        </div>
-      )}
-      {scrapeMsg && (
-        <div className="bg-emerald-50 border-b border-emerald-200 px-6 py-2 text-sm text-emerald-700 flex items-center gap-2 flex-wrap">
-          {scraping && <Loader2 className="w-4 h-4 animate-spin flex-shrink-0" />}
-          {scrapeMsg}
-        </div>
-      )}
+      </div>
 
       {/* Stats bar */}
       {stats && (
@@ -387,58 +380,6 @@ export default function Home() {
           <StatChip icon={<TrendingUp className="w-4 h-4" />}   label="Customers"  value={(stats.by_status?.existing_customer || 0).toLocaleString()}  color="text-green-600" />
         </div>
       )}
-
-      {/* Filters */}
-      <div className="bg-white border-b px-6 py-3 flex flex-wrap gap-3 items-center">
-        <div className="relative flex-1 min-w-48">
-          <Search className="absolute left-3 top-2.5 w-4 h-4 text-gray-400" />
-          <Input placeholder="Search funeral homes…" className="pl-9 h-9"
-            onChange={e => setFilter('search', e.target.value || undefined)} />
-        </div>
-        <Select onValueChange={(v: string | null) => setFilter('state', (!v || v === 'all') ? undefined : v)}>
-          <SelectTrigger className="w-28 h-9"><SelectValue placeholder="State" /></SelectTrigger>
-          <SelectContent>
-            <SelectItem value="all">All States</SelectItem>
-            {US_STATES.map(s => <SelectItem key={s} value={s}>{s}</SelectItem>)}
-          </SelectContent>
-        </Select>
-        <Select onValueChange={(v: string | null) => setFilter('source', (!v || v === 'all') ? undefined : v)}>
-          <SelectTrigger className="w-36 h-9"><SelectValue placeholder="Source" /></SelectTrigger>
-          <SelectContent>
-            <SelectItem value="all">All Sources</SelectItem>
-            {['echovita','legacy_com','parting_pro','efuneral','tukios'].map(s =>
-              <SelectItem key={s} value={s}>{s}</SelectItem>)}
-          </SelectContent>
-        </Select>
-        <Select onValueChange={(v: string | null) => setFilter('lead_status', (!v || v === 'all') ? undefined : v)}>
-          <SelectTrigger className="w-40 h-9"><SelectValue placeholder="Status" /></SelectTrigger>
-          <SelectContent>
-            <SelectItem value="all">All Statuses</SelectItem>
-            {['prospect','contacted','qualified','existing_customer','not_a_fit','churned'].map(s =>
-              <SelectItem key={s} value={s}>{s.replace(/_/g,' ')}</SelectItem>)}
-          </SelectContent>
-        </Select>
-        <Select onValueChange={(v: string | null) => setFilter('software', (!v || v === 'all') ? undefined : v)}>
-          <SelectTrigger className="w-36 h-9"><SelectValue placeholder="Software" /></SelectTrigger>
-          <SelectContent>
-            <SelectItem value="all">Any Software</SelectItem>
-            <SelectItem value="parting_pro">Parting Pro</SelectItem>
-            <SelectItem value="efuneral">eFuneral</SelectItem>
-            <SelectItem value="tukios">Tukios</SelectItem>
-            <SelectItem value="none">Unknown</SelectItem>
-          </SelectContent>
-        </Select>
-        <Select onValueChange={(v: string | null) => setFilter('sort_by', v || undefined)}>
-          <SelectTrigger className="w-36 h-9"><SelectValue placeholder="Sort by" /></SelectTrigger>
-          <SelectContent>
-            <SelectItem value="obits_count">Obit Volume</SelectItem>
-            <SelectItem value="google_reviews">Reviews</SelectItem>
-            <SelectItem value="name">Name A-Z</SelectItem>
-            <SelectItem value="created_at">Date Added</SelectItem>
-          </SelectContent>
-        </Select>
-        <span className="text-sm text-gray-500 ml-auto">{total.toLocaleString()} results</span>
-      </div>
 
       {/* Table */}
       <div className="overflow-x-auto">
@@ -471,42 +412,36 @@ export default function Home() {
                 <span className="text-xs">Import funeral_homes_master.csv to get started.</span>
               </td></tr>
             ) : homes.map(home => (
-              <React.Fragment key={home.id}>
-              <tr className={`hover:bg-gray-50 transition-colors ${selectedIds.has(home.id) ? 'bg-violet-50' : expanded[home.id] ? 'bg-indigo-50/40' : ''}`}>
+              <tr
+                key={home.id}
+                className={`hover:bg-gray-50 transition-colors cursor-pointer ${selectedIds.has(home.id) ? 'bg-violet-50' : ''}`}
+                onClick={() => setSelectedHome(home)}
+              >
                 <td className="pl-4 pr-2 py-3 w-8">
                   <input type="checkbox"
                     className="rounded border-gray-300 cursor-pointer"
                     checked={selectedIds.has(home.id)}
-                    onChange={e => setSelectedIds(prev => {
-                      const n = new Set(prev)
-                      e.target.checked ? n.add(home.id) : n.delete(home.id)
-                      return n
-                    })}
+                    onClick={e => e.stopPropagation()}
+                    onChange={e => {
+                      e.stopPropagation()
+                      setSelectedIds(prev => {
+                        const n = new Set(prev)
+                        e.target.checked ? n.add(home.id) : n.delete(home.id)
+                        return n
+                      })
+                    }}
                   />
                 </td>
                 <td className="px-4 py-3 font-medium text-gray-900 max-w-xs">
-                  <div className="flex items-start gap-1.5">
-                    {home.location_count != null && home.location_count > 1 ? (
-                      <button onClick={() => toggleLocations(home)}
-                        className="mt-0.5 flex-shrink-0 text-indigo-500 hover:text-indigo-700 transition-colors">
-                        {expanded[home.id]
-                          ? <ChevronDown className="w-4 h-4" />
-                          : <ChevronRightIcon className="w-4 h-4" />}
-                      </button>
-                    ) : (
-                      <span className="w-4 flex-shrink-0" />
-                    )}
-                    <div className="min-w-0">
-                      <div className="truncate">{home.name}</div>
-                      <div className="flex items-center gap-2 mt-0.5">
-                        {home.source && <span className="text-xs text-gray-400">{home.source}</span>}
-                        {home.location_count != null && home.location_count > 1 && (
-                          <button onClick={() => toggleLocations(home)}
-                            className="text-xs bg-indigo-100 text-indigo-700 px-1.5 py-0.5 rounded font-medium hover:bg-indigo-200 transition-colors">
-                            {home.location_count} locations
-                          </button>
-                        )}
-                      </div>
+                  <div className="min-w-0">
+                    <div className="truncate">{home.name}</div>
+                    <div className="flex items-center gap-2 mt-0.5">
+                      {home.source && <span className="text-xs text-gray-400">{home.source}</span>}
+                      {home.location_count != null && home.location_count > 1 && (
+                        <span className="text-xs bg-indigo-100 text-indigo-700 px-1.5 py-0.5 rounded font-medium">
+                          {home.location_count} locations
+                        </span>
+                      )}
                     </div>
                   </div>
                 </td>
@@ -514,6 +449,7 @@ export default function Home() {
                   {home.address && home.maps_place_id
                     ? <a href={`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(home.name)}&query_place_id=${home.maps_place_id}`}
                         target="_blank" rel="noopener noreferrer"
+                        onClick={e => e.stopPropagation()}
                         className="flex items-start gap-1 text-xs text-blue-600 hover:underline leading-tight group">
                         <MapPin className="w-3 h-3 flex-shrink-0 mt-0.5 group-hover:text-blue-700" />
                         <span className="truncate" title={home.address}>{home.address}</span>
@@ -539,6 +475,7 @@ export default function Home() {
                   {home.google_reviews && home.maps_place_id ? (
                     <a href={`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(home.name)}&query_place_id=${home.maps_place_id}`}
                        target="_blank" rel="noopener noreferrer"
+                       onClick={e => e.stopPropagation()}
                        className="flex items-center gap-1 text-xs hover:underline">
                       <Star className="w-3 h-3 text-yellow-500 fill-yellow-500" />
                       <span className="font-medium text-gray-700">{home.google_rating?.toFixed(1)}</span>
@@ -554,7 +491,7 @@ export default function Home() {
                 </td>
                 <td className="px-4 py-3">
                   {home.phone
-                    ? <a href={`tel:${home.phone}`} className="flex items-center gap-1 text-xs text-green-700 hover:underline">
+                    ? <a href={`tel:${home.phone}`} onClick={e => e.stopPropagation()} className="flex items-center gap-1 text-xs text-green-700 hover:underline">
                         <Phone className="w-3 h-3" />{home.phone}
                       </a>
                     : <span className="text-gray-300 text-xs">—</span>}
@@ -565,7 +502,8 @@ export default function Home() {
                 <td className="px-4 py-3">
                   <select
                     value={home.lead_status}
-                    onChange={e => updateStatus(home.id, e.target.value)}
+                    onClick={e => e.stopPropagation()}
+                    onChange={e => { e.stopPropagation(); updateStatus(home.id, e.target.value) }}
                     className={`text-xs px-2 py-1 rounded-full border-0 font-medium cursor-pointer ${STATUS_COLORS[home.lead_status] || 'bg-gray-100'}`}
                   >
                     {Object.keys(STATUS_COLORS).map(s => (
@@ -577,58 +515,33 @@ export default function Home() {
                   {home.website
                     ? <div className="space-y-0.5">
                         <a href={home.website} target="_blank" rel="noopener noreferrer"
+                          onClick={e => e.stopPropagation()}
                           className="flex items-center gap-1 text-xs text-blue-600 hover:underline truncate">
                           <Globe className="w-3 h-3 flex-shrink-0" />
                           <span className="truncate">{home.website.replace(/^https?:\/\/(www\.)?/, '').replace(/\/$/, '')}</span>
                         </a>
                         {home.echovita_url && (
                           <a href={home.echovita_url} target="_blank" rel="noopener noreferrer"
+                            onClick={e => e.stopPropagation()}
                             className="text-xs text-gray-400 hover:text-gray-600 block">Echovita ↗</a>
                         )}
                         {home.legacy_url && (
                           <a href={home.legacy_url} target="_blank" rel="noopener noreferrer"
+                            onClick={e => e.stopPropagation()}
                             className="text-xs text-gray-400 hover:text-gray-600 block">Legacy ↗</a>
                         )}
                       </div>
                     : home.echovita_url
                       ? <a href={home.echovita_url} target="_blank" rel="noopener noreferrer"
+                          onClick={e => e.stopPropagation()}
                           className="text-xs text-gray-400 hover:text-gray-600">Echovita ↗</a>
                       : home.legacy_url
                         ? <a href={home.legacy_url} target="_blank" rel="noopener noreferrer"
+                            onClick={e => e.stopPropagation()}
                             className="text-xs text-gray-400 hover:text-gray-600">Legacy ↗</a>
                         : '—'}
                 </td>
               </tr>
-
-              {/* ── Collapsible sibling locations ── */}
-              {expanded[home.id] && (
-                <tr key={`${home.id}-locations`}>
-                  <td colSpan={9} className="px-0 py-0 bg-indigo-50/60 border-b border-indigo-100">
-                    {loadingSiblings[home.id] ? (
-                      <div className="flex items-center gap-2 px-10 py-3 text-xs text-indigo-500">
-                        <Loader2 className="w-3.5 h-3.5 animate-spin" /> Loading locations…
-                      </div>
-                    ) : (
-                      <div className="px-6 py-3">
-                        <div className="text-xs font-semibold text-indigo-600 mb-2 flex items-center gap-1.5">
-                          <GitBranch className="w-3.5 h-3.5" />
-                          {(home as unknown as Record<string,unknown>)['parent_company'] as string || home.name}
-                          <span className="font-normal text-indigo-400">· {(siblings[home.id]?.length ?? 0) + 1} locations total</span>
-                        </div>
-                        <div className="grid gap-1">
-                          {/* Self row */}
-                          <LocationRow home={home} isSelf />
-                          {/* Siblings */}
-                          {(siblings[home.id] || []).map(sib => (
-                            <LocationRow key={sib.id} home={sib} />
-                          ))}
-                        </div>
-                      </div>
-                    )}
-                  </td>
-                </tr>
-              )}
-              </React.Fragment>
             ))}
           </tbody>
         </table>
@@ -650,25 +563,231 @@ export default function Home() {
           </Button>
         </div>
       </div>
+
+      {/* Detail panel backdrop */}
+      {selectedHome && (
+        <div
+          className="fixed inset-0 bg-black/20 z-50"
+          onClick={() => setSelectedHome(null)}
+        />
+      )}
+
+      {/* Detail panel */}
+      <div
+        className={`fixed top-0 right-0 h-full w-[480px] bg-white shadow-2xl z-50 flex flex-col transition-transform duration-300 ${selectedHome ? 'translate-x-0' : 'translate-x-full'}`}
+      >
+        {selectedHome && <DetailPanel home={selectedHome} onClose={() => setSelectedHome(null)} onStatusChange={updateStatus} />}
+      </div>
     </div>
   )
 }
 
-// ── Software tags: shows all detected platforms, source-known + scrape-detected ──
+// ── Detail Panel ───────────────────────────────────────────────────────────────
+function DetailPanel({ home, onClose, onStatusChange }: {
+  home: FuneralHome
+  onClose: () => void
+  onStatusChange: (id: string, status: string) => void
+}) {
+  const mapsUrl = home.maps_place_id
+    ? `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(home.name)}&query_place_id=${home.maps_place_id}`
+    : null
+
+  const addressForEmbed = home.address || [home.city, home.state_abbr].filter(Boolean).join(', ')
+
+  let websiteLocations: Array<{ name: string; address: string }> = []
+  try {
+    const raw = (home as unknown as Record<string, unknown>)['website_locations']
+    if (typeof raw === 'string' && raw) websiteLocations = JSON.parse(raw)
+    else if (Array.isArray(raw)) websiteLocations = raw as Array<{ name: string; address: string }>
+  } catch { /* ignore */ }
+
+  const parentCompany = (home as unknown as Record<string, unknown>)['parent_company'] as string | undefined
+  const obitsCount = home.obits_count
+  const websiteObitCount = (home as unknown as Record<string, unknown>)['website_obit_count'] as number | undefined
+  const lastEnrichedAt = (home as unknown as Record<string, unknown>)['last_enriched_at'] as string | undefined
+  const lastScrapedAt = (home as unknown as Record<string, unknown>)['last_scraped_at'] as string | undefined
+  const websiteScrapeStatus = (home as unknown as Record<string, unknown>)['website_scrape_status'] as string | undefined
+
+  return (
+    <div className="flex flex-col h-full">
+      {/* Panel header */}
+      <div className="flex items-start justify-between px-6 py-4 border-b flex-shrink-0">
+        <div className="flex-1 min-w-0 pr-4">
+          <h2 className="text-lg font-semibold text-gray-900 leading-snug">{home.name}</h2>
+          <div className="mt-2">
+            <select
+              value={home.lead_status}
+              onChange={e => onStatusChange(home.id, e.target.value)}
+              className={`text-xs px-2 py-1 rounded-full border-0 font-medium cursor-pointer ${STATUS_COLORS[home.lead_status] || 'bg-gray-100'}`}
+            >
+              {Object.keys(STATUS_COLORS).map(s => (
+                <option key={s} value={s}>{s.replace(/_/g,' ')}</option>
+              ))}
+            </select>
+          </div>
+        </div>
+        <button onClick={onClose} className="text-gray-400 hover:text-gray-600 flex-shrink-0 mt-0.5">
+          <X className="w-5 h-5" />
+        </button>
+      </div>
+
+      {/* Panel body */}
+      <div className="flex-1 overflow-y-auto px-6 py-4 space-y-5">
+
+        {/* Google Business */}
+        <section>
+          <h3 className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">Google Business</h3>
+          <div className="space-y-1.5 text-sm">
+            {home.address && (
+              <div className="flex items-start gap-2">
+                <MapPin className="w-4 h-4 text-gray-400 flex-shrink-0 mt-0.5" />
+                {mapsUrl
+                  ? <a href={mapsUrl} target="_blank" rel="noopener noreferrer" className="text-blue-600 hover:underline leading-snug">
+                      {home.address}
+                    </a>
+                  : <span className="text-gray-700 leading-snug">{home.address}</span>
+                }
+              </div>
+            )}
+            {home.google_reviews != null && (
+              <div className="flex items-center gap-2">
+                <Star className="w-4 h-4 text-yellow-500 fill-yellow-500 flex-shrink-0" />
+                {mapsUrl
+                  ? <a href={mapsUrl} target="_blank" rel="noopener noreferrer" className="text-blue-600 hover:underline">
+                      {home.google_rating?.toFixed(1)} · {home.google_reviews.toLocaleString()} reviews
+                    </a>
+                  : <span className="text-gray-700">{home.google_rating?.toFixed(1)} · {home.google_reviews.toLocaleString()} reviews</span>
+                }
+              </div>
+            )}
+            {home.phone && (
+              <div className="flex items-center gap-2">
+                <Phone className="w-4 h-4 text-gray-400 flex-shrink-0" />
+                <a href={`tel:${home.phone}`} className="text-green-700 hover:underline">{home.phone}</a>
+              </div>
+            )}
+            {home.website && (
+              <div className="flex items-center gap-2">
+                <Globe className="w-4 h-4 text-gray-400 flex-shrink-0" />
+                <a href={home.website} target="_blank" rel="noopener noreferrer" className="text-blue-600 hover:underline truncate flex items-center gap-1">
+                  {home.website.replace(/^https?:\/\/(www\.)?/, '').replace(/\/$/, '')}
+                  <ExternalLink className="w-3 h-3 flex-shrink-0" />
+                </a>
+              </div>
+            )}
+          </div>
+        </section>
+
+        {/* Map embed */}
+        {addressForEmbed && (
+          <div className="rounded-lg overflow-hidden border border-gray-200">
+            <iframe
+              title="map"
+              src={`https://maps.google.com/maps?q=${encodeURIComponent(addressForEmbed)}&output=embed`}
+              width="100%"
+              height="180"
+              style={{ border: 0 }}
+              loading="lazy"
+            />
+          </div>
+        )}
+
+        {/* Software */}
+        <section>
+          <h3 className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">Software</h3>
+          <SoftwareTags home={home} />
+        </section>
+
+        {/* Obituaries */}
+        <section>
+          <h3 className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">Obituaries</h3>
+          <div className="space-y-1 text-sm">
+            {obitsCount != null && (
+              <div className="flex items-center gap-2 text-gray-700">
+                <span className="font-semibold text-blue-700">{obitsCount.toLocaleString()}</span>
+                <span className="text-gray-400 text-xs">from Echovita</span>
+              </div>
+            )}
+            {websiteObitCount != null && (
+              <div className="flex items-center gap-2 text-gray-700">
+                <span className="font-semibold text-gray-600">~{websiteObitCount.toLocaleString()}</span>
+                <span className="text-gray-400 text-xs">from website scrape</span>
+              </div>
+            )}
+            {home.echovita_url && (
+              <a href={home.echovita_url} target="_blank" rel="noopener noreferrer"
+                className="text-xs text-blue-500 hover:underline flex items-center gap-1">
+                Echovita profile <ExternalLink className="w-3 h-3" />
+              </a>
+            )}
+            {home.legacy_url && (
+              <a href={home.legacy_url} target="_blank" rel="noopener noreferrer"
+                className="text-xs text-blue-500 hover:underline flex items-center gap-1">
+                Legacy profile <ExternalLink className="w-3 h-3" />
+              </a>
+            )}
+            {!obitsCount && !websiteObitCount && !home.echovita_url && !home.legacy_url && (
+              <span className="text-xs text-gray-400">No obituary data</span>
+            )}
+          </div>
+        </section>
+
+        {/* Locations */}
+        <section>
+          <h3 className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">Locations</h3>
+          <div className="space-y-1 text-sm text-gray-700">
+            {parentCompany && (
+              <div><span className="text-gray-400 text-xs">Parent company: </span>{parentCompany}</div>
+            )}
+            {home.location_count != null && home.location_count > 1 && (
+              <div><span className="text-gray-400 text-xs">Total locations: </span>
+                <span className="font-semibold">{home.location_count}</span>
+              </div>
+            )}
+            {websiteLocations.length > 0 && (
+              <div className="mt-2 space-y-1">
+                {websiteLocations.map((loc, i) => (
+                  <div key={i} className="text-xs text-gray-600 bg-gray-50 rounded px-2 py-1">
+                    <div className="font-medium">{loc.name}</div>
+                    {loc.address && <div className="text-gray-400">{loc.address}</div>}
+                  </div>
+                ))}
+              </div>
+            )}
+            {!parentCompany && (home.location_count == null || home.location_count <= 1) && websiteLocations.length === 0 && (
+              <span className="text-xs text-gray-400">Single location</span>
+            )}
+          </div>
+        </section>
+
+        {/* Source data */}
+        <section>
+          <h3 className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">Source Data</h3>
+          <div className="space-y-1 text-xs text-gray-600">
+            {home.source && <div><span className="text-gray-400">Source: </span>{home.source}</div>}
+            {lastEnrichedAt && <div><span className="text-gray-400">Enriched: </span>{new Date(lastEnrichedAt).toLocaleString()}</div>}
+            {lastScrapedAt && <div><span className="text-gray-400">Scraped: </span>{new Date(lastScrapedAt).toLocaleString()}</div>}
+            {websiteScrapeStatus && <div><span className="text-gray-400">Scrape status: </span>{websiteScrapeStatus}</div>}
+            {home.created_at && <div><span className="text-gray-400">Created: </span>{new Date(home.created_at).toLocaleString()}</div>}
+          </div>
+        </section>
+      </div>
+    </div>
+  )
+}
+
+// ── Software tags ──────────────────────────────────────────────────────────────
 function SoftwareTags({ home }: { home: FuneralHome }) {
   const tags: Array<{ key: string; fromScrape: boolean }> = []
 
-  // Collect from boolean flags (source-known)
   if (home.uses_parting_pro) tags.push({ key: 'parting_pro', fromScrape: false })
   if (home.uses_efuneral)    tags.push({ key: 'efuneral',    fromScrape: false })
   if (home.uses_tukios)      tags.push({ key: 'tukios',      fromScrape: false })
 
-  // From software_detected field (could be source or scrape)
   if (home.software_detected && !tags.find(t => t.key === home.software_detected)) {
     tags.push({ key: home.software_detected, fromScrape: false })
   }
 
-  // From website scrape — add if different from above
   if (home.website_software && !tags.find(t => t.key === home.website_software)) {
     tags.push({ key: home.website_software, fromScrape: true })
   }
@@ -688,108 +807,6 @@ function SoftwareTags({ home }: { home: FuneralHome }) {
           {SOFTWARE_LABELS[key] || key}
         </Badge>
       ))}
-    </div>
-  )
-}
-
-// ── Action button with tooltip ─────────────────────────────────────────────────
-function ActionButton({ icon, label, tooltip, color, loading, onClick }: {
-  icon: React.ReactNode; label: string; tooltip: string
-  color: 'violet' | 'indigo' | 'emerald'; loading: boolean; onClick: () => void
-}) {
-  const colors = {
-    violet:  'text-violet-700 hover:bg-violet-100',
-    indigo:  'text-indigo-700 hover:bg-indigo-100',
-    emerald: 'text-emerald-700 hover:bg-emerald-100',
-  }
-  return (
-    <div className="relative group">
-      <button
-        disabled={loading}
-        onClick={onClick}
-        className={`flex items-center gap-1.5 text-xs font-medium px-2.5 py-1.5 rounded-md transition-colors disabled:opacity-50 ${colors[color]}`}
-      >
-        {loading ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : icon}
-        {label}
-      </button>
-      {/* Tooltip */}
-      <div className="absolute right-0 top-full mt-2 w-64 bg-gray-900 text-white text-xs rounded-lg px-3 py-2 shadow-lg
-                      opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none z-50 leading-relaxed">
-        {tooltip}
-        <div className="absolute -top-1 right-4 w-2 h-2 bg-gray-900 rotate-45" />
-      </div>
-    </div>
-  )
-}
-
-function LocationRow({ home, isSelf = false }: { home: FuneralHome; isSelf?: boolean }) {
-  const mapsUrl = home.maps_place_id
-    ? `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(home.name)}&query_place_id=${home.maps_place_id}`
-    : null
-
-  return (
-    <div className={`flex items-center gap-3 py-1.5 px-3 rounded-md text-xs ${isSelf ? 'bg-indigo-100/60 font-medium' : 'bg-white/70 hover:bg-white'}`}>
-      {/* Name + self badge */}
-      <div className="w-52 flex-shrink-0 flex items-center gap-1.5 min-w-0">
-        {isSelf && <span className="text-[10px] bg-indigo-500 text-white px-1 py-0.5 rounded flex-shrink-0">this</span>}
-        <span className="truncate text-gray-800">{home.name}</span>
-      </div>
-
-      {/* Address → Google Business Profile */}
-      <div className="flex-1 min-w-0">
-        {home.address && mapsUrl ? (
-          <a href={mapsUrl} target="_blank" rel="noopener noreferrer"
-            className="flex items-center gap-1 text-blue-600 hover:underline truncate group">
-            <MapPin className="w-3 h-3 flex-shrink-0 text-blue-400" />
-            <span className="truncate">{home.address}</span>
-            <ExternalLink className="w-2.5 h-2.5 flex-shrink-0 opacity-0 group-hover:opacity-100 transition-opacity" />
-          </a>
-        ) : (
-          <span className="text-gray-400">{home.address || [home.city, home.state_abbr].filter(Boolean).join(', ') || '—'}</span>
-        )}
-      </div>
-
-      {/* Reviews */}
-      <div className="w-24 flex-shrink-0">
-        {home.google_reviews && mapsUrl ? (
-          <a href={mapsUrl} target="_blank" rel="noopener noreferrer"
-            className="flex items-center gap-1 hover:underline">
-            <Star className="w-3 h-3 text-yellow-500 fill-yellow-500" />
-            <span className="text-gray-700">{home.google_rating?.toFixed(1)}</span>
-            <span className="text-gray-400">({home.google_reviews.toLocaleString()})</span>
-          </a>
-        ) : <span className="text-gray-300">—</span>}
-      </div>
-
-      {/* Phone */}
-      <div className="w-32 flex-shrink-0">
-        {home.phone
-          ? <a href={`tel:${home.phone}`} className="flex items-center gap-1 text-green-700 hover:underline">
-              <Phone className="w-3 h-3" />{home.phone}
-            </a>
-          : <span className="text-gray-300">—</span>}
-      </div>
-
-      {/* Website */}
-      <div className="w-36 flex-shrink-0 min-w-0">
-        {home.website
-          ? <a href={home.website} target="_blank" rel="noopener noreferrer"
-              className="flex items-center gap-1 text-blue-600 hover:underline truncate">
-              <Globe className="w-3 h-3 flex-shrink-0" />
-              <span className="truncate">{home.website.replace(/^https?:\/\/(www\.)?/, '').replace(/\/$/, '')}</span>
-            </a>
-          : <span className="text-gray-300">—</span>}
-      </div>
-
-      {/* Source badge */}
-      <div className="w-24 flex-shrink-0">
-        <span className={`text-[10px] px-1.5 py-0.5 rounded ${
-          home.source === 'google_locations' ? 'bg-green-100 text-green-700' :
-          home.source === 'echovita' ? 'bg-blue-100 text-blue-700' :
-          home.source === 'parting_pro' ? 'bg-violet-100 text-violet-700' :
-          'bg-gray-100 text-gray-500'
-        }`}>{home.source}</span>
-      </div>
     </div>
   )
 }
