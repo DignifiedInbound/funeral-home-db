@@ -191,16 +191,21 @@ async function scrapeWebsite(website: string) {
 
 // ─── Handler ──────────────────────────────────────────────────────────────────
 export async function POST(req: NextRequest) {
-  const { limit = 10, offset = 0 } = await req.json().catch(() => ({}))
+  const { limit = 10, offset = 0, ids } = await req.json().catch(() => ({}))
 
-  // Fetch records with websites that haven't been scraped yet
-  const { data: records, error } = await supabaseAdmin
+  // Fetch records — either specific IDs or next unscraped batch with websites
+  let query = supabaseAdmin
     .from('funeral_homes')
     .select('id,name,city,state_abbr,website,phone,email,software_detected')
     .not('website', 'is', null)
-    .is('last_scraped_at', null)
-    .order('obits_count', { ascending: false, nullsFirst: false })
-    .range(offset, offset + limit - 1)
+  if (ids?.length) {
+    query = query.in('id', ids)
+  } else {
+    query = query.is('last_scraped_at', null)
+      .order('obits_count', { ascending: false, nullsFirst: false })
+      .range(offset, offset + limit - 1)
+  }
+  const { data: records, error } = await query
 
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })
   if (!records?.length) return NextResponse.json({ scraped: 0, message: 'No unscraped records with websites' })

@@ -28,9 +28,37 @@ const STATUS_COLORS: Record<string, string> = {
 }
 
 const SOFTWARE_COLORS: Record<string, string> = {
-  parting_pro: 'bg-violet-100 text-violet-800',
-  efuneral:    'bg-orange-100 text-orange-800',
-  tukios:      'bg-teal-100 text-teal-800',
+  parting_pro:   'bg-violet-100 text-violet-800',
+  efuneral:      'bg-orange-100 text-orange-800',
+  tukios:        'bg-teal-100 text-teal-800',
+  frontrunner:   'bg-sky-100 text-sky-800',
+  funeralone:    'bg-pink-100 text-pink-800',
+  tribute_tech:  'bg-lime-100 text-lime-800',
+  osiris:        'bg-amber-100 text-amber-800',
+  batesville:    'bg-rose-100 text-rose-800',
+  frazer:        'bg-cyan-100 text-cyan-800',
+  domani:        'bg-fuchsia-100 text-fuchsia-800',
+  legacy_embed:  'bg-indigo-100 text-indigo-800',
+  wordpress:     'bg-blue-100 text-blue-800',
+  wix:           'bg-yellow-100 text-yellow-800',
+  squarespace:   'bg-gray-100 text-gray-700',
+}
+
+const SOFTWARE_LABELS: Record<string, string> = {
+  parting_pro:   'Parting Pro',
+  efuneral:      'eFuneral',
+  tukios:        'Tukios',
+  frontrunner:   'FrontRunner',
+  funeralone:    'FuneralOne',
+  tribute_tech:  'Tribute Tech',
+  osiris:        'Osiris',
+  batesville:    'Batesville',
+  frazer:        'Frazer',
+  domani:        'Domani',
+  legacy_embed:  'Legacy',
+  wordpress:     'WordPress',
+  wix:           'Wix',
+  squarespace:   'Squarespace',
 }
 
 interface Stats {
@@ -55,6 +83,7 @@ export default function Home() {
   const [expanded, setExpanded]       = useState<Record<string, boolean>>({})
   const [siblings, setSiblings]       = useState<Record<string, FuneralHome[]>>({})
   const [loadingSiblings, setLoadingSiblings] = useState<Record<string, boolean>>({})
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
   const [filters, setFilters]       = useState<FuneralHomeFilters>({
     page: 1, per_page: 50, sort_by: 'obits_count', sort_dir: 'desc'
   })
@@ -163,23 +192,26 @@ export default function Home() {
     a.click()
   }
 
-  const handleDetectLocations = async (batchSize = 10) => {
+  const selCount = selectedIds.size
+
+  const handleDetectLocations = async () => {
+    const ids = [...selectedIds]
+    const label = ids.length > 0 ? `${ids.length} selected` : '10'
     setDetecting(true)
-    setDetectMsg(`Detecting multi-location businesses (${batchSize} records)…`)
+    setDetectMsg(`Finding all Google Maps locations for ${label} businesses…`)
     try {
       const res = await fetch('/api/locations', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ limit: batchSize }),
+        body: JSON.stringify(ids.length > 0 ? { ids } : { limit: 10 }),
       })
       const json = await res.json()
       if (json.error) setDetectMsg(`❌ ${json.error}`)
       else if (json.message) setDetectMsg(`ℹ️ ${json.message}`)
-      else setDetectMsg(`✅ Processed ${json.processed} records — ${json.new_locations} new locations discovered.`)
-    } catch {
-      setDetectMsg(`❌ Network error`)
-    }
+      else setDetectMsg(`✅ Processed ${json.processed} records — ${json.new_locations} new sibling locations added.`)
+    } catch { setDetectMsg(`❌ Network error`) }
     setDetecting(false)
+    setSelectedIds(new Set())
     fetchStats(); fetchHomes()
   }
 
@@ -200,44 +232,48 @@ export default function Home() {
     setLoadingSiblings(prev => ({ ...prev, [id]: false }))
   }
 
-  const handleScrape = async (batchSize = 10) => {
+  const handleScrape = async () => {
+    const ids = [...selectedIds]
+    const label = ids.length > 0 ? `${ids.length} selected` : '10'
     setScraping(true)
-    setScrapeMsg(`Scraping ${batchSize} websites for software, obituaries & locations…`)
+    setScrapeMsg(`Scraping ${label} websites — detecting software platform, obituary count, locations…`)
     try {
       const res = await fetch('/api/scrape', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ limit: batchSize }),
+        body: JSON.stringify(ids.length > 0 ? { ids } : { limit: 10 }),
       })
       const json = await res.json()
       if (json.error) setScrapeMsg(`❌ ${json.error}`)
       else if (json.message) setScrapeMsg(`ℹ️ ${json.message}`)
       else {
         const summary = (json.results as Array<{name:string;software:string|null;obits:number;locations:number}>)
-          .map(r => `${r.name}: ${r.software || '?'}, ${r.obits} obits, ${r.locations} locs`).join(' · ')
-        setScrapeMsg(`✅ Scraped ${json.scraped}/${json.total}  —  ${summary}`)
+          .map(r => `${r.name}: ${r.software || '?'}, ${r.obits} obits`).join(' · ')
+        setScrapeMsg(`✅ Scraped ${json.scraped}/${json.total} — ${summary}`)
       }
     } catch { setScrapeMsg(`❌ Network error`) }
     setScraping(false)
+    setSelectedIds(new Set())
     fetchHomes()
   }
 
-  const handleEnrich = async (batchSize = 50) => {
+  const handleEnrich = async () => {
+    const ids = [...selectedIds]
+    const label = ids.length > 0 ? `${ids.length} selected` : '50'
     setEnriching(true)
-    setEnrichMsg(`Enriching next ${batchSize} records with Google data…`)
+    setEnrichMsg(`Looking up ${label} records on Google Business — address, phone, reviews, rating…`)
     try {
       const res = await fetch('/api/enrich', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ limit: batchSize }),
+        body: JSON.stringify(ids.length > 0 ? { ids } : { limit: 50 }),
       })
       const json = await res.json()
       if (json.error) setEnrichMsg(`❌ ${json.error}`)
       else setEnrichMsg(`✅ Enriched ${json.enriched}/${json.total} records. ${json.groups} multi-location groups found.`)
-    } catch (e) {
-      setEnrichMsg(`❌ Network error`)
-    }
+    } catch { setEnrichMsg(`❌ Network error`) }
     setEnriching(false)
+    setSelectedIds(new Set())
     fetchStats(); fetchHomes()
   }
 
@@ -261,7 +297,12 @@ export default function Home() {
           <h1 className="text-xl font-semibold text-gray-900">Funeral Home Database</h1>
           {stats && <span className="text-sm text-gray-500 ml-2">{stats.total.toLocaleString()} records</span>}
         </div>
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-2 flex-wrap">
+          {selCount > 0 && (
+            <span className="text-xs font-medium text-gray-500 bg-gray-100 px-2 py-1 rounded-full">
+              {selCount} selected
+            </span>
+          )}
           <label className="flex items-center gap-2 cursor-pointer">
             <Button variant="outline" size="sm" disabled={importing} onClick={() => document.getElementById('csv-import')?.click()}>
               <Upload className="w-4 h-4 mr-1" />Import CSV
@@ -271,22 +312,36 @@ export default function Home() {
           <Button variant="outline" size="sm" onClick={handleExport}>
             <Download className="w-4 h-4 mr-1" />Export
           </Button>
-          <Button variant="outline" size="sm" disabled={enriching} onClick={() => handleEnrich(50)}
-            className="text-violet-700 border-violet-200 hover:bg-violet-50">
-            {enriching ? <Loader2 className="w-4 h-4 mr-1 animate-spin" /> : <Sparkles className="w-4 h-4 mr-1" />}
-            Enrich 50
-          </Button>
-          <Button variant="outline" size="sm" disabled={detecting} onClick={() => handleDetectLocations(10)}
-            className="text-indigo-700 border-indigo-200 hover:bg-indigo-50">
-            {detecting ? <Loader2 className="w-4 h-4 mr-1 animate-spin" /> : <GitBranch className="w-4 h-4 mr-1" />}
-            Find Locations
-          </Button>
-          <Button variant="outline" size="sm" disabled={scraping} onClick={() => handleScrape(10)}
-            className="text-emerald-700 border-emerald-200 hover:bg-emerald-50">
-            {scraping ? <Loader2 className="w-4 h-4 mr-1 animate-spin" /> : <ScanSearch className="w-4 h-4 mr-1" />}
-            Scrape 10
-          </Button>
-          <Button variant="outline" size="sm" onClick={() => { fetchStats(); fetchHomes() }}>
+
+          {/* ── Enrichment actions ── */}
+          <div className="flex items-center gap-1 border border-gray-200 rounded-lg p-1 bg-gray-50">
+            <ActionButton
+              icon={<Sparkles className="w-3.5 h-3.5" />}
+              label={selCount > 0 ? `Enrich ${selCount}` : 'Enrich 50'}
+              tooltip="Look up each funeral home on Google Business Profile to get verified address, phone number, star rating and review count."
+              color="violet"
+              loading={enriching}
+              onClick={handleEnrich}
+            />
+            <ActionButton
+              icon={<GitBranch className="w-3.5 h-3.5" />}
+              label={selCount > 0 ? `Locations ${selCount}` : 'Find Locations'}
+              tooltip="Search Google Maps for all branches of the same business. Discovers sibling locations (e.g. a chain with 8 chapels) and links them together with a shared location count."
+              color="indigo"
+              loading={detecting}
+              onClick={handleDetectLocations}
+            />
+            <ActionButton
+              icon={<ScanSearch className="w-3.5 h-3.5" />}
+              label={selCount > 0 ? `Scrape ${selCount}` : 'Scrape 10'}
+              tooltip="Visit each funeral home's own website to detect which software platform they use (Tukios, Parting Pro, FuneralOne, etc.), count obituaries, and extract location pages."
+              color="emerald"
+              loading={scraping}
+              onClick={handleScrape}
+            />
+          </div>
+
+          <Button variant="outline" size="sm" onClick={() => { setSelectedIds(new Set()); fetchStats(); fetchHomes() }}>
             <RefreshCw className="w-4 h-4" />
           </Button>
         </div>
@@ -390,6 +445,16 @@ export default function Home() {
         <table className="w-full text-sm">
           <thead className="bg-gray-50 border-b">
             <tr>
+              <th className="pl-4 pr-2 py-3 w-8">
+                <input type="checkbox"
+                  className="rounded border-gray-300 cursor-pointer"
+                  checked={homes.length > 0 && homes.every(h => selectedIds.has(h.id))}
+                  onChange={e => {
+                    if (e.target.checked) setSelectedIds(prev => new Set([...prev, ...homes.map(h => h.id)]))
+                    else setSelectedIds(prev => { const n = new Set(prev); homes.forEach(h => n.delete(h.id)); return n })
+                  }}
+                />
+              </th>
               {['Name','Address','Obits','Reviews','Phone','Software','Status','Website'].map(h => (
                 <th key={h} className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wide whitespace-nowrap">{h}</th>
               ))}
@@ -397,17 +462,28 @@ export default function Home() {
           </thead>
           <tbody className="divide-y divide-gray-100 bg-white">
             {loading ? (
-              <tr><td colSpan={8} className="text-center py-12 text-gray-400">
+              <tr><td colSpan={9} className="text-center py-12 text-gray-400">
                 <Loader2 className="w-6 h-6 animate-spin mx-auto mb-2" />Loading…
               </td></tr>
             ) : homes.length === 0 ? (
-              <tr><td colSpan={8} className="text-center py-12 text-gray-400">
+              <tr><td colSpan={9} className="text-center py-12 text-gray-400">
                 No funeral homes found.<br />
                 <span className="text-xs">Import funeral_homes_master.csv to get started.</span>
               </td></tr>
             ) : homes.map(home => (
               <React.Fragment key={home.id}>
-              <tr className={`hover:bg-gray-50 transition-colors ${expanded[home.id] ? 'bg-indigo-50/40' : ''}`}>
+              <tr className={`hover:bg-gray-50 transition-colors ${selectedIds.has(home.id) ? 'bg-violet-50' : expanded[home.id] ? 'bg-indigo-50/40' : ''}`}>
+                <td className="pl-4 pr-2 py-3 w-8">
+                  <input type="checkbox"
+                    className="rounded border-gray-300 cursor-pointer"
+                    checked={selectedIds.has(home.id)}
+                    onChange={e => setSelectedIds(prev => {
+                      const n = new Set(prev)
+                      e.target.checked ? n.add(home.id) : n.delete(home.id)
+                      return n
+                    })}
+                  />
+                </td>
                 <td className="px-4 py-3 font-medium text-gray-900 max-w-xs">
                   <div className="flex items-start gap-1.5">
                     {home.location_count != null && home.location_count > 1 ? (
@@ -484,18 +560,7 @@ export default function Home() {
                     : <span className="text-gray-300 text-xs">—</span>}
                 </td>
                 <td className="px-4 py-3">
-                  {(() => {
-                    const sw = home.software_detected || (home as unknown as Record<string,unknown>)['website_software'] as string | null
-                    const scraped = !home.software_detected && sw
-                    return sw
-                      ? <Badge className={`text-xs ${SOFTWARE_COLORS[sw] || 'bg-gray-100 text-gray-600'} ${scraped ? 'opacity-70' : ''}`}
-                          title={scraped ? 'Detected via website scrape' : 'From source data'}>
-                          {sw}{scraped ? ' *' : ''}
-                        </Badge>
-                      : (home as unknown as Record<string,unknown>)['last_scraped_at']
-                        ? <span className="text-xs text-gray-300">none</span>
-                        : '—'
-                  })()}
+                  <SoftwareTags home={home} />
                 </td>
                 <td className="px-4 py-3">
                   <select
@@ -538,7 +603,7 @@ export default function Home() {
               {/* ── Collapsible sibling locations ── */}
               {expanded[home.id] && (
                 <tr key={`${home.id}-locations`}>
-                  <td colSpan={8} className="px-0 py-0 bg-indigo-50/60 border-b border-indigo-100">
+                  <td colSpan={9} className="px-0 py-0 bg-indigo-50/60 border-b border-indigo-100">
                     {loadingSiblings[home.id] ? (
                       <div className="flex items-center gap-2 px-10 py-3 text-xs text-indigo-500">
                         <Loader2 className="w-3.5 h-3.5 animate-spin" /> Loading locations…
@@ -584,6 +649,74 @@ export default function Home() {
             <ChevronRight className="w-4 h-4" />
           </Button>
         </div>
+      </div>
+    </div>
+  )
+}
+
+// ── Software tags: shows all detected platforms, source-known + scrape-detected ──
+function SoftwareTags({ home }: { home: FuneralHome }) {
+  const tags: Array<{ key: string; fromScrape: boolean }> = []
+
+  // Collect from boolean flags (source-known)
+  if (home.uses_parting_pro) tags.push({ key: 'parting_pro', fromScrape: false })
+  if (home.uses_efuneral)    tags.push({ key: 'efuneral',    fromScrape: false })
+  if (home.uses_tukios)      tags.push({ key: 'tukios',      fromScrape: false })
+
+  // From software_detected field (could be source or scrape)
+  if (home.software_detected && !tags.find(t => t.key === home.software_detected)) {
+    tags.push({ key: home.software_detected, fromScrape: false })
+  }
+
+  // From website scrape — add if different from above
+  if (home.website_software && !tags.find(t => t.key === home.website_software)) {
+    tags.push({ key: home.website_software, fromScrape: true })
+  }
+
+  if (tags.length === 0) {
+    return home.last_scraped_at
+      ? <span className="text-xs text-gray-300">none detected</span>
+      : <span className="text-gray-300 text-xs">—</span>
+  }
+
+  return (
+    <div className="flex flex-wrap gap-1">
+      {tags.map(({ key, fromScrape }) => (
+        <Badge key={key}
+          className={`text-xs px-1.5 py-0 leading-5 ${SOFTWARE_COLORS[key] || 'bg-gray-100 text-gray-600'} ${fromScrape ? 'opacity-60' : ''}`}
+          title={fromScrape ? `${key} — detected by website scrape` : `${key} — confirmed from source data`}>
+          {SOFTWARE_LABELS[key] || key}
+        </Badge>
+      ))}
+    </div>
+  )
+}
+
+// ── Action button with tooltip ─────────────────────────────────────────────────
+function ActionButton({ icon, label, tooltip, color, loading, onClick }: {
+  icon: React.ReactNode; label: string; tooltip: string
+  color: 'violet' | 'indigo' | 'emerald'; loading: boolean; onClick: () => void
+}) {
+  const colors = {
+    violet:  'text-violet-700 hover:bg-violet-100',
+    indigo:  'text-indigo-700 hover:bg-indigo-100',
+    emerald: 'text-emerald-700 hover:bg-emerald-100',
+  }
+  return (
+    <div className="relative group">
+      <button
+        disabled={loading}
+        onClick={onClick}
+        className={`flex items-center gap-1.5 text-xs font-medium px-2.5 py-1.5 rounded-md transition-colors disabled:opacity-50 ${colors[color]}`}
+      >
+        {loading ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : icon}
+        {label}
+      </button>
+      {/* Tooltip */}
+      <div className="absolute right-0 top-full mt-2 w-64 bg-gray-900 text-white text-xs rounded-lg px-3 py-2 shadow-lg
+                      opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none z-50 leading-relaxed">
+        {tooltip}
+        <div className="absolute -top-1 right-4 w-2 h-2 bg-gray-900 rotate-45" />
       </div>
     </div>
   )

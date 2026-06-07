@@ -41,15 +41,20 @@ function sleep(ms: number) { return new Promise(r => setTimeout(r, ms)) }
 export async function POST(req: NextRequest) {
   if (!GOOGLE_API_KEY) return NextResponse.json({ error: 'GOOGLE_MAPS_API_KEY not set' }, { status: 500 })
 
-  const { limit = 50 } = await req.json().catch(() => ({}))
+  const { limit = 50, ids } = await req.json().catch(() => ({}))
 
-  // Fetch records not yet enriched, prioritized by obit volume
-  const { data: records, error } = await supabaseAdmin
+  // Fetch records — either specific IDs or next unenriched batch
+  let query = supabaseAdmin
     .from('funeral_homes')
     .select('id,name,city,state,state_abbr,phone,website,obits_count')
-    .is('maps_place_id', null)
-    .order('obits_count', { ascending: false, nullsFirst: false })
-    .limit(limit)
+  if (ids?.length) {
+    query = query.in('id', ids)
+  } else {
+    query = query.is('maps_place_id', null)
+      .order('obits_count', { ascending: false, nullsFirst: false })
+      .limit(limit)
+  }
+  const { data: records, error } = await query
 
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })
   if (!records?.length) return NextResponse.json({ enriched: 0, total: 0, groups: 0, message: 'All records already enriched' })
